@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Church management system for leaders and pastors">
+    <meta name="theme-color" content="#2c3e50">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Church CMS">
+    <title>Church Management System</title>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
+    
+    <!-- Favicon and App Icons -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Login Screen -->
+        <div class="login-container" id="login-screen">
+            <div class="login-card">
+                <h1>Church Management System</h1>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" required>
+                    </div>
+                    <button type="submit" class="btn-primary">Login</button>
+                </form>
+                <div id="login-error" class="error-message"></div>
+                <div class="login-help">
+                    <p><strong>Default Admin:</strong> username: admin, password: admin123</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main App (hidden initially) -->
+        <div class="main-app" id="main-app" style="display: none;">
+            <header class="header">
+                <div class="header-content">
+                    <h1>Church Management</h1>
+                    <div class="user-info">
+                        <div class="user-details">
+                            <span id="user-role"></span>
+                            <span id="user-branch" class="user-branch"></span>
+                        </div>
+                        <button class="btn-secondary" id="logout-btn">Logout</button>
+                    </div>
+                </div>
+                <nav class="nav">
+                    <button class="nav-btn active" data-page="dashboard">Dashboard</button>
+                    <button class="nav-btn" data-page="members">Members</button>
+                    <button class="nav-btn" data-page="branches" id="branches-nav">Branches</button>
+                    <button class="nav-btn" data-page="admin" id="admin-nav" style="display: none;">Admin</button>
+                </nav>
+            </header>
+
+            <main class="main">
+                <!-- Dashboard Page -->
+                <div class="page active" id="dashboard">
+                    <div class="page-header">
+                        <h2>Dashboard</h2>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <h3>Total Members</h3>
+                            <span class="stat-number" id="total-members">0</span>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Total Branches</h3>
+                            <span class="stat-number" id="total-branches">0</span>
+                        </div>
+                    </div>
+                    <div class="branches-overview">
+                        <h3>Branches Overview</h3>
+                        <div id="branches-list"></div>
+                    </div>
+                </div>
+
+                <!-- Members Page -->
+                <div class="page" id="members">
+                    <div class="page-header">
+                        <h2>Members</h2>
+                        <button class="btn-primary" id="add-member-btn" style="display: none;">Add Member</button>
+                    </div>
+                    <div class="search-filter">
+                        <input type="text" id="member-search" placeholder="Search members...">
+                        <select id="branch-filter">
+                            <option value="">All Branches</option>
+                        </select>
+                    </div>
+                    <div id="members-list"></div>
+                </div>
+
+                <!-- Branches Page -->
+                <div class="page" id="branches">
+                    <div class="page-header">
+                        <h2>Branches</h2>
+                        <button class="btn-primary" id="add-branch-btn" style="display: none;">Add Branch</button>
+                    </div>
+                    <div id="branches-grid"></div>
+                </div>
+
+                <!-- Admin Page (Main Leader Only) -->
+                <div class="page" id="admin">
+                    <div class="page-header">
+                        <h2>Administration</h2>
+                    </div>
+                    <div class="admin-section">
+                        <h3>Create Branch Pastor Account</h3>
+                        <form id="create-pastor-form">
+                            <div class="form-group">
+                                <label for="pastor-username">Username</label>
+                                <input type="text" id="pastor-username" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="pastor-password">Password</label>
+                                <input type="password" id="pastor-password" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="pastor-confirm-password">Confirm Password</label>
+                                <input type="password" id="pastor-confirm-password" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="pastor-branch">Assign to Branch</label>
+                                <div class="branch-select-container">
+                                    <select id="pastor-branch" required>
+                                        <option value="">Select Branch</option>
+                                        <option value="create-new">+ Create New Branch</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <!-- New Branch Creation Section (hidden by default) -->
+                            <div id="new-branch-section" style="display: none;">
+                                <div class="form-group">
+                                    <label for="new-branch-name">New Branch Name *</label>
+                                    <input type="text" id="new-branch-name">
+                                </div>
+                                <div class="form-group">
+                                    <label for="new-branch-address">Branch Address</label>
+                                    <textarea id="new-branch-address"></textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="new-branch-pastor-name">Pastor Name</label>
+                                    <input type="text" id="new-branch-pastor-name" placeholder="Will be filled from username above">
+                                </div>
+                                <button type="button" class="btn-secondary" id="cancel-new-branch">Cancel New Branch</button>
+                            </div>
+                            
+                            <button type="submit" class="btn-primary">Create Pastor Account</button>
+                        </form>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Member Modal -->
+            <div class="modal" id="member-modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3 id="member-modal-title">Add Member</h3>
+                        <button class="close-btn" id="close-member-modal">&times;</button>
+                    </div>
+                    <form id="member-form">
+                        <div class="form-group">
+                            <label for="member-name">Full Name *</label>
+                            <input type="text" id="member-name" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="member-address">Home Address</label>
+                            <textarea id="member-address"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="member-workplace">Place of Work</label>
+                            <input type="text" id="member-workplace">
+                        </div>
+                        <div class="form-group">
+                            <label for="member-occupation">Occupation</label>
+                            <input type="text" id="member-occupation">
+                        </div>
+                        <div class="form-group">
+                            <label for="member-join-date">Date Joined Church</label>
+                            <input type="date" id="member-join-date">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="member-is-worker"> Church Worker
+                            </label>
+                        </div>
+                        <div class="form-group" id="worker-department-group" style="display: none;">
+                            <label for="member-department">Department/Role</label>
+                            <input type="text" id="member-department" placeholder="e.g., Choir, Ushering, Youth Ministry">
+                        </div>
+                        <div class="form-group">
+                            <label for="member-phone">Phone Number</label>
+                            <input type="tel" id="member-phone">
+                        </div>
+                        <div class="form-group">
+                            <label for="member-email">Email</label>
+                            <input type="email" id="member-email">
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn-secondary" id="cancel-member">Cancel</button>
+                            <button type="submit" class="btn-primary">Save Member</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Branch Modal -->
+            <div class="modal" id="branch-modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3 id="branch-modal-title">Add Branch</h3>
+                        <button class="close-btn" id="close-branch-modal">&times;</button>
+                    </div>
+                    <form id="branch-form">
+                        <div class="form-group">
+                            <label for="branch-name">Branch Name *</label>
+                            <input type="text" id="branch-name" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="branch-address">Branch Address</label>
+                            <textarea id="branch-address"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="branch-pastor">Pastor in Charge</label>
+                            <input type="text" id="branch-pastor">
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn-secondary" id="cancel-branch">Cancel</button>
+                            <button type="submit" class="btn-primary">Save Branch</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    
+    <!-- PWA Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then((registration) => {
+                        console.log('ServiceWorker registered:', registration);
+                    })
+                    .catch((error) => {
+                        console.log('ServiceWorker registration failed:', error);
+                    });
+            });
+        }
+
+        // PWA Install Prompt
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            
+            // Show install button/banner (optional)
+            const installBanner = document.createElement('div');
+            installBanner.id = 'install-banner';
+            installBanner.innerHTML = `
+                <div style="background: #3498db; color: white; padding: 1rem; text-align: center; position: fixed; bottom: 0; left: 0; right: 0; z-index: 9999; display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                    <span>📱 Install this app on your phone for easy access!</span>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button id="install-btn" style="background: white; color: #3498db; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-weight: bold;">Install</button>
+                        <button id="dismiss-install" style="background: transparent; color: white; border: 1px solid white; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer;">Later</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(installBanner);
+            
+            document.getElementById('install-btn').addEventListener('click', async () => {
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                console.log(`User response: ${outcome}`);
+                deferredPrompt = null;
+                installBanner.remove();
+            });
+            
+            document.getElementById('dismiss-install').addEventListener('click', () => {
+                installBanner.remove();
+            });
+        });
+    </script>
+</body>
+</html>
