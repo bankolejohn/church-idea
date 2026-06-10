@@ -5,28 +5,55 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
 const path = require('path');
 require('dotenv').config();
 
 const db = require('./lib/database');
 const logger = require('./lib/logger');
+const { validateMember, validateBranch, validatePastor, sanitize, validateId } = require('./lib/validation');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'change-this-in-production';
+
+// CRITICAL: Fail fast if JWT_SECRET is not set in production
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET === 'change-this-in-production') {
+    if (process.env.NODE_ENV === 'production') {
+        logger.error('FATAL: JWT_SECRET is not set or using default value. Refusing to start in production.');
+        process.exit(1);
+    } else {
+        logger.warn('JWT_SECRET is not set. Using insecure default for development ONLY.');
+    }
+}
+const SECRET = JWT_SECRET || 'dev-only-insecure-default';
 
 // Trust proxy (for ECS/K8s behind load balancer)
 app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet({
-    contentSecurityPolicy: false // Allow inline scripts for now
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"], // TODO: Remove unsafe-inline when migrating to bundler
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", "data:"],
+            connectSrc: ["'self'"],
+            fontSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            frameAncestors: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"]
+        }
+    },
+    crossOriginEmbedderPolicy: false
 }));
 
 // Rate limiting
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // limit each IP to 100 requests per window
+    windowMs: 15 * 60 * 1000,
+    max: 100,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests, please try again later.' }
@@ -41,17 +68,29 @@ const loginLimiter = rateLimit({
 });
 
 // CORS
+const allowedOrigins = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+    : null;
+
 app.use(cors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: allowedOrigins || true,
     credentials: true
 }));
 
-// Request parsing
-app.use(express.json({ limit: '10mb' }));
+// Request parsing with size limit
+app.use(express.json({ limit: '1mb' }));
 
-// Request logging
+// Attach request ID for tracing
+app.use((req, res, next) => {
+    req.requestId = req.headers['x-request-id'] || crypto.randomUUID();
+    res.setHeader('X-Request-Id', req.requestId);
+    next();
+});
+
+// Request logging (exclude health endpoints from logs to reduce noise)
 app.use(morgan('combined', {
-    stream: { write: (message) => logger.info(message.trim()) }
+    stream: { write: (message) => logger.info(message.trim()) },
+    skip: (req) => req.url === '/health' || req.url === '/ready'
 }));
 
 // Static files
@@ -61,27 +100,25 @@ app.use(express.static('public'));
 // Health Check Endpoints
 // ──────────────────────────────────────────────
 
-// Liveness probe: "Is the process alive?"
 app.get('/health', (req, res) => {
-    res.status(200).json({ 
+    res.status(200).json({
         status: 'ok',
         timestamp: new Date().toISOString(),
         uptime: process.uptime()
     });
 });
 
-// Readiness probe: "Can it serve traffic?"
 app.get('/ready', async (req, res) => {
     const dbHealthy = await db.isHealthy();
-    
+
     if (dbHealthy) {
-        res.status(200).json({ 
+        res.status(200).json({
             status: 'ready',
             database: 'connected',
             timestamp: new Date().toISOString()
         });
     } else {
-        res.status(503).json({ 
+        res.status(503).json({
             status: 'not ready',
             database: 'disconnected',
             timestamp: new Date().toISOString()
@@ -101,7 +138,7 @@ const authenticateToken = (req, res, next) => {
         return res.status(401).json({ error: 'Access token required' });
     }
 
-    jwt.verify(token, JWT_SECRET, (err, user) => {
+    jwt.verify(token, SECRET, (err, user) => {
         if (err) {
             return res.status(403).json({ error: 'Invalid or expired token' });
         }
@@ -130,29 +167,33 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         return res.status(400).json({ error: 'Username and password are required' });
     }
 
+    // Input length check
+    if (username.length > 100 || password.length > 128) {
+        return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
     try {
         const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
         const user = result.rows[0];
 
-        if (!user || !bcrypt.compareSync(password, user.password)) {
-            logger.warn('Failed login attempt', { username });
+        if (!user || !(await bcrypt.compare(password, user.password))) {
+            logger.warn('Failed login attempt', { username, requestId: req.requestId });
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role, branch_id: user.branch_id },
-            JWT_SECRET,
+            SECRET,
             { expiresIn: '24h' }
         );
 
-        // Get branch name for branch pastors
         let branch_name = null;
         if (user.role === 'branch_pastor' && user.branch_id) {
             const branchResult = await db.query('SELECT name FROM branches WHERE id = $1', [user.branch_id]);
             branch_name = branchResult.rows[0]?.name || 'Unknown Branch';
         }
 
-        logger.info('User logged in', { username: user.username, role: user.role });
+        logger.info('User logged in', { username: user.username, role: user.role, requestId: req.requestId });
 
         res.json({
             token,
@@ -165,7 +206,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
             }
         });
     } catch (error) {
-        logger.error('Login error', { error: error.message });
+        logger.error('Login error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -182,7 +223,7 @@ app.get('/api/me', authenticateToken, async (req, res) => {
             user: { ...req.user, branch_name }
         });
     } catch (error) {
-        logger.error('Get user error', { error: error.message });
+        logger.error('Get user error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -201,54 +242,64 @@ app.get('/api/branches', authenticateToken, async (req, res) => {
         }
         res.json(result.rows);
     } catch (error) {
-        logger.error('Get branches error', { error: error.message });
+        logger.error('Get branches error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 app.post('/api/branches', authenticateToken, requireRole(['main_leader']), async (req, res) => {
-    const { name, address, pastor_name } = req.body;
-
-    if (!name || name.trim().length === 0) {
-        return res.status(400).json({ error: 'Branch name is required' });
+    const errors = validateBranch(req.body);
+    if (errors.length > 0) {
+        return res.status(400).json({ error: errors.join(', ') });
     }
+
+    const name = sanitize(req.body.name);
+    const address = sanitize(req.body.address);
+    const pastor_name = sanitize(req.body.pastor_name);
 
     try {
         const result = await db.query(
             'INSERT INTO branches (name, address, pastor_name) VALUES ($1, $2, $3) RETURNING *',
-            [name.trim(), address?.trim(), pastor_name?.trim()]
+            [name, address, pastor_name]
         );
 
-        logger.info('Branch created', { branch: result.rows[0].name });
+        logger.info('Branch created', { branch: result.rows[0].name, requestId: req.requestId });
         res.status(201).json(result.rows[0]);
     } catch (error) {
-        logger.error('Create branch error', { error: error.message });
+        logger.error('Create branch error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 app.put('/api/branches/:id', authenticateToken, requireRole(['main_leader']), async (req, res) => {
-    const { name, address, pastor_name } = req.body;
-    const branchId = parseInt(req.params.id);
-
-    if (!name || name.trim().length === 0) {
-        return res.status(400).json({ error: 'Branch name is required' });
+    const branchId = validateId(req.params.id);
+    if (!branchId) {
+        return res.status(400).json({ error: 'Invalid branch ID' });
     }
+
+    const errors = validateBranch(req.body);
+    if (errors.length > 0) {
+        return res.status(400).json({ error: errors.join(', ') });
+    }
+
+    const name = sanitize(req.body.name);
+    const address = sanitize(req.body.address);
+    const pastor_name = sanitize(req.body.pastor_name);
 
     try {
         const result = await db.query(
             'UPDATE branches SET name = $1, address = $2, pastor_name = $3 WHERE id = $4 RETURNING *',
-            [name.trim(), address?.trim(), pastor_name?.trim(), branchId]
+            [name, address, pastor_name, branchId]
         );
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Branch not found' });
         }
 
-        logger.info('Branch updated', { branchId });
+        logger.info('Branch updated', { branchId, requestId: req.requestId });
         res.json(result.rows[0]);
     } catch (error) {
-        logger.error('Update branch error', { error: error.message });
+        logger.error('Update branch error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -259,59 +310,81 @@ app.put('/api/branches/:id', authenticateToken, requireRole(['main_leader']), as
 
 app.get('/api/members', authenticateToken, async (req, res) => {
     try {
+        // Pagination
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 100));
+        const offset = (page - 1) * limit;
+
         let result;
         if (req.user.role === 'branch_pastor') {
             result = await db.query(
                 `SELECT m.*, b.name as branch_name 
                  FROM members m JOIN branches b ON m.branch_id = b.id 
-                 WHERE m.branch_id = $1 ORDER BY m.name`,
-                [req.user.branch_id]
+                 WHERE m.branch_id = $1 ORDER BY m.name LIMIT $2 OFFSET $3`,
+                [req.user.branch_id, limit, offset]
             );
         } else {
             result = await db.query(
                 `SELECT m.*, b.name as branch_name 
                  FROM members m JOIN branches b ON m.branch_id = b.id 
-                 ORDER BY m.name`
+                 ORDER BY m.name LIMIT $1 OFFSET $2`,
+                [limit, offset]
             );
         }
         res.json(result.rows);
     } catch (error) {
-        logger.error('Get members error', { error: error.message });
+        logger.error('Get members error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 app.post('/api/members', authenticateToken, requireRole(['branch_pastor']), async (req, res) => {
-    const { name, address, workplace, occupation, join_date, branch_id, is_worker, department, phone, email } = req.body;
-
-    if (!name || name.trim().length === 0) {
-        return res.status(400).json({ error: 'Member name is required' });
+    const errors = validateMember(req.body);
+    if (errors.length > 0) {
+        return res.status(400).json({ error: errors.join(', ') });
     }
+
+    const { join_date, branch_id, is_worker } = req.body;
 
     // Pastor can only add to their own branch
     if (req.user.branch_id !== parseInt(branch_id)) {
         return res.status(403).json({ error: 'Can only add members to your own branch' });
     }
 
+    const name = sanitize(req.body.name);
+    const address = sanitize(req.body.address);
+    const workplace = sanitize(req.body.workplace);
+    const occupation = sanitize(req.body.occupation);
+    const department = sanitize(req.body.department);
+    const phone = sanitize(req.body.phone);
+    const email = sanitize(req.body.email);
+
     try {
         const result = await db.query(
             `INSERT INTO members (name, address, workplace, occupation, join_date, branch_id, is_worker, department, phone, email)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-            [name.trim(), address?.trim(), workplace?.trim(), occupation?.trim(), join_date || null, 
-             branch_id, is_worker || false, department?.trim(), phone?.trim(), email?.trim()]
+            [name, address, workplace, occupation, join_date || null,
+             branch_id, is_worker || false, department, phone, email]
         );
 
-        logger.info('Member added', { member: name, branch_id });
+        logger.info('Member added', { member: name, branch_id, requestId: req.requestId });
         res.status(201).json(result.rows[0]);
     } catch (error) {
-        logger.error('Create member error', { error: error.message });
+        logger.error('Create member error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 app.put('/api/members/:id', authenticateToken, requireRole(['branch_pastor']), async (req, res) => {
-    const memberId = parseInt(req.params.id);
-    const { name, address, workplace, occupation, join_date, is_worker, department, phone, email } = req.body;
+    const memberId = validateId(req.params.id);
+    if (!memberId) {
+        return res.status(400).json({ error: 'Invalid member ID' });
+    }
+
+    const errors = validateMember(req.body);
+    if (errors.length > 0) {
+        return res.status(400).json({ error: errors.join(', ') });
+    }
 
     try {
         // Check ownership
@@ -323,27 +396,38 @@ app.put('/api/members/:id', authenticateToken, requireRole(['branch_pastor']), a
             return res.status(403).json({ error: 'Can only edit members from your own branch' });
         }
 
+        const name = sanitize(req.body.name);
+        const address = sanitize(req.body.address);
+        const workplace = sanitize(req.body.workplace);
+        const occupation = sanitize(req.body.occupation);
+        const department = sanitize(req.body.department);
+        const phone = sanitize(req.body.phone);
+        const email = sanitize(req.body.email);
+        const { join_date, is_worker } = req.body;
+
         const result = await db.query(
             `UPDATE members SET name = $1, address = $2, workplace = $3, occupation = $4, 
              join_date = $5, is_worker = $6, department = $7, phone = $8, email = $9, 
              updated_at = CURRENT_TIMESTAMP WHERE id = $10 RETURNING *`,
-            [name?.trim(), address?.trim(), workplace?.trim(), occupation?.trim(), 
-             join_date || null, is_worker || false, department?.trim(), phone?.trim(), email?.trim(), memberId]
+            [name, address, workplace, occupation,
+             join_date || null, is_worker || false, department, phone, email, memberId]
         );
 
-        logger.info('Member updated', { memberId });
+        logger.info('Member updated', { memberId, requestId: req.requestId });
         res.json(result.rows[0]);
     } catch (error) {
-        logger.error('Update member error', { error: error.message });
+        logger.error('Update member error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 app.delete('/api/members/:id', authenticateToken, requireRole(['branch_pastor']), async (req, res) => {
-    const memberId = parseInt(req.params.id);
+    const memberId = validateId(req.params.id);
+    if (!memberId) {
+        return res.status(400).json({ error: 'Invalid member ID' });
+    }
 
     try {
-        // Check ownership
         const existing = await db.query('SELECT branch_id FROM members WHERE id = $1', [memberId]);
         if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Member not found' });
@@ -353,11 +437,11 @@ app.delete('/api/members/:id', authenticateToken, requireRole(['branch_pastor'])
         }
 
         await db.query('DELETE FROM members WHERE id = $1', [memberId]);
-        
-        logger.info('Member deleted', { memberId });
+
+        logger.info('Member deleted', { memberId, requestId: req.requestId });
         res.json({ message: 'Member deleted successfully' });
     } catch (error) {
-        logger.error('Delete member error', { error: error.message });
+        logger.error('Delete member error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -374,7 +458,7 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
                 FROM branches b LEFT JOIN members m ON b.id = m.branch_id
                 GROUP BY b.id ORDER BY b.name
             `);
-            
+
             const totalMembers = await db.query('SELECT COUNT(*) as total_members FROM members');
 
             res.json({
@@ -396,7 +480,7 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
             });
         }
     } catch (error) {
-        logger.error('Get stats error', { error: error.message });
+        logger.error('Get stats error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -406,30 +490,33 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
 // ──────────────────────────────────────────────
 
 app.post('/api/create-pastor', authenticateToken, requireRole(['main_leader']), async (req, res) => {
+    const errors = validatePastor(req.body);
+    if (errors.length > 0) {
+        return res.status(400).json({ error: errors.join(', ') });
+    }
+
     const { username, password, branch_id } = req.body;
 
-    if (!username || !password || !branch_id) {
-        return res.status(400).json({ error: 'Username, password, and branch are required' });
-    }
-
-    if (password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    }
-
     try {
-        const hashedPassword = bcrypt.hashSync(password, 10);
+        // Verify branch exists
+        const branchCheck = await db.query('SELECT id FROM branches WHERE id = $1', [parseInt(branch_id)]);
+        if (branchCheck.rows.length === 0) {
+            return res.status(400).json({ error: 'Branch does not exist' });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 12);
         const result = await db.query(
             'INSERT INTO users (username, password, role, branch_id) VALUES ($1, $2, $3, $4) RETURNING id, username, role, branch_id',
-            [username.trim(), hashedPassword, 'branch_pastor', parseInt(branch_id)]
+            [sanitize(username), hashedPassword, 'branch_pastor', parseInt(branch_id)]
         );
 
-        logger.info('Pastor account created', { username, branch_id });
+        logger.info('Pastor account created', { username, branch_id, requestId: req.requestId });
         res.status(201).json({ message: 'Pastor account created successfully', user: result.rows[0] });
     } catch (error) {
         if (error.message.includes('unique') || error.message.includes('duplicate')) {
             return res.status(400).json({ error: 'Username already exists' });
         }
-        logger.error('Create pastor error', { error: error.message });
+        logger.error('Create pastor error', { error: error.message, requestId: req.requestId });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -450,29 +537,23 @@ let server;
 
 function startServer() {
     server = app.listen(PORT, '0.0.0.0', () => {
-        logger.info(`Server started`, { port: PORT, env: process.env.NODE_ENV || 'development' });
+        logger.info('Server started', { port: PORT, env: process.env.NODE_ENV || 'development' });
     });
 
-    // Handle graceful shutdown (SIGTERM from ECS/K8s)
-    process.on('SIGTERM', gracefulShutdown);
-    process.on('SIGINT', gracefulShutdown);
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 async function gracefulShutdown(signal) {
     logger.info(`${signal} received. Starting graceful shutdown...`);
 
-    // Stop accepting new connections
     server.close(async () => {
         logger.info('HTTP server closed');
-
-        // Close database connections
         await db.close();
-
         logger.info('Graceful shutdown complete');
         process.exit(0);
     });
 
-    // Force shutdown after 30 seconds
     setTimeout(() => {
         logger.error('Forced shutdown after timeout');
         process.exit(1);
@@ -481,4 +562,4 @@ async function gracefulShutdown(signal) {
 
 startServer();
 
-module.exports = app; // Export for testing
+module.exports = app;

@@ -43,39 +43,43 @@ const migrations = [
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS migrations (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
-                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
+            CREATE INDEX IF NOT EXISTS idx_members_branch_id ON members(branch_id);
+            CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
         `
     }
 ];
 
 async function migrate() {
     const client = await pool.connect();
-    
+
     try {
-        // Create migrations table if it doesn't exist
+        // Create migrations tracking table
         await client.query(`
             CREATE TABLE IF NOT EXISTS migrations (
                 id SERIAL PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
+                name VARCHAR(255) UNIQUE NOT NULL,
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
-        // Get applied migrations
+        // Get already-applied migrations
         const result = await client.query('SELECT name FROM migrations');
-        const applied = result.rows.map(r => r.name);
+        const applied = new Set(result.rows.map(r => r.name));
 
-        // Run pending migrations
+        // Run pending migrations in order
         for (const migration of migrations) {
-            if (!applied.includes(migration.name)) {
+            if (!applied.has(migration.name)) {
                 console.log(`Running migration: ${migration.name}`);
-                await client.query(migration.up);
-                await client.query('INSERT INTO migrations (name) VALUES ($1)', [migration.name]);
-                console.log(`Completed: ${migration.name}`);
+                await client.query('BEGIN');
+                try {
+                    await client.query(migration.up);
+                    await client.query('INSERT INTO migrations (name) VALUES ($1)', [migration.name]);
+                    await client.query('COMMIT');
+                    console.log(`Completed: ${migration.name}`);
+                } catch (err) {
+                    await client.query('ROLLBACK');
+                    throw err;
+                }
             } else {
                 console.log(`Skipped (already applied): ${migration.name}`);
             }
