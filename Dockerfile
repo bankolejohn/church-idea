@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────
 # Stage 1: Dependencies
 # ──────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:26-alpine AS deps
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ RUN npm ci --only=production
 # ──────────────────────────────────────────────
 # Stage 2: Production Image
 # ──────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:26-alpine AS production
 
 # Security: run as non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
