@@ -31,8 +31,30 @@ jobs:
       - name: Run ESLint
         run: npm run lint
 
+      - name: Check commit messages
+        if: github.event_name == 'pull_request'
+        uses: wagoid/commitlint-github-action@v5
+        with:
+          configFile: .commitlintrc.json
+
   # ─────────────────────────────────────────────
-  # Stage 2: Unit & Integration Tests
+  # Stage 2: Secret Detection
+  # ─────────────────────────────────────────────
+  secrets-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: GitLeaks - Detect hardcoded secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────
+  # Stage 3: Unit & Integration Tests
   # ─────────────────────────────────────────────
   test:
     name: Tests
@@ -87,7 +109,7 @@ jobs:
           path: coverage/
 
   # ─────────────────────────────────────────────
-  # Stage 3: Build Docker Image
+  # Stage 4: Build Docker Image
   # ─────────────────────────────────────────────
   build:
     name: Build & Push Image
@@ -132,7 +154,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ─────────────────────────────────────────────
-  # Stage 4: Security Scanning
+  # Stage 5: Security Scanning (SAST + SCA)
   # ─────────────────────────────────────────────
   security:
     name: Security Scan
@@ -151,7 +173,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Run npm audit
+      - name: Run npm audit (SCA)
         run: npm audit --audit-level=high
         continue-on-error: true
 
@@ -171,7 +193,32 @@ jobs:
           sarif_file: 'trivy-fs-results.sarif'
 
   # ─────────────────────────────────────────────
-  # Stage 5: Container Image Scan
+  # Stage 6: SAST (CodeQL)
+  # ─────────────────────────────────────────────
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript'
+
+  # ─────────────────────────────────────────────
+  # Stage 7: Container Image Scan
   # ─────────────────────────────────────────────
   image-scan:
     name: Image Vulnerability Scan

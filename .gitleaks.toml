@@ -1,0 +1,21 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist for known safe patterns"
+
+# Test secrets used only in CI/test environments
+paths = [
+    '''\.env\.example''',
+    '''\.env\.db\.example''',
+    '''tests/.*\.test\.js''',
+    '''\.github/workflows/ci\.yml'''
+]
+
+# Known safe patterns
+regexes = [
+    '''test-secret-for-ci-only''',
+    '''dev-only-insecure-default''',
+    '''testuser''',
+    '''testpass'''
+]

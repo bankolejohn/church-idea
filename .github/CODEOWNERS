@@ -1,0 +1,15 @@
+# Default owner for everything
+* @bankolejohn
+
+# Infrastructure changes require explicit review
+infrastructure/ @bankolejohn
+kubernetes/ @bankolejohn
+helm/ @bankolejohn
+.github/workflows/ @bankolejohn
+
+# Security-sensitive files
+lib/validation.js @bankolejohn
+lib/database.js @bankolejohn
+server.js @bankolejohn
+Dockerfile @bankolejohn
+docker-compose.yml @bankolejohn
