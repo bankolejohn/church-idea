@@ -1,0 +1,13 @@
+# Production environment - HA, Multi-AZ, full security
+# NEVER commit terraform.tfvars to git
+
+aws_region      = "us-east-1"
+project_name    = "church-cms"
+environment     = "prod"
+container_image = "ghcr.io/bankolejohn/church-idea:1.0.0"  # Use version tags, never :latest
+
+db_name     = "churchdb"
+db_username = "churchadmin"
+db_password = "CHANGE-THIS-use-a-40-char-random-string"
+
+jwt_secret = "CHANGE-THIS-generate-with-openssl-rand-base64-64"

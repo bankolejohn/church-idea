@@ -1,0 +1,13 @@
+# Staging environment - mirrors prod with smaller resources
+# NEVER commit terraform.tfvars to git
+
+aws_region      = "us-east-1"
+project_name    = "church-cms"
+environment     = "staging"
+container_image = "ghcr.io/bankolejohn/church-idea:develop"
+
+db_name     = "churchdb"
+db_username = "churchadmin"
+db_password = "CHANGE-THIS-strong-password"
+
+jwt_secret = "CHANGE-THIS-generate-with-openssl-rand-base64-32"
