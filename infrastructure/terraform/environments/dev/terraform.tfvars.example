@@ -1,0 +1,15 @@
+# Copy this to terraform.tfvars and fill in real values
+# NEVER commit terraform.tfvars to git
+
+aws_region      = "us-east-1"
+project_name    = "church-cms"
+environment     = "dev"
+container_image = "ghcr.io/bankolejohn/church-idea:latest"
+
+# Database credentials (use strong values)
+db_name     = "churchdb"
+db_username = "churchadmin"
+db_password = "CHANGE-THIS-strong-password-123"
+
+# JWT Secret (generate with: openssl rand -base64 32)
+jwt_secret = "CHANGE-THIS-generate-a-random-string"
