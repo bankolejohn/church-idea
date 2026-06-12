@@ -19,3 +19,9 @@ variable "az_count" {
   type        = number
   default     = 2
 }
+
+variable "enable_nat_gateway" {
+  description = "Enable NAT Gateway (costs ~$32/month). Disable for dev to save costs."
+  type        = bool
+  default     = true
+}

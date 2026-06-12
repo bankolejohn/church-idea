@@ -60,6 +60,17 @@ variable "max_count" {
   default     = 4
 }
 
+variable "assign_public_ip" {
+  description = "Assign public IP to ECS tasks (required when no NAT Gateway)"
+  type        = bool
+  default     = false
+}
+
+variable "task_subnet_ids" {
+  description = "Subnets to place ECS tasks in (public if no NAT, private if NAT enabled)"
+  type        = list(string)
+}
+
 variable "log_retention_days" {
   type    = number
   default = 30

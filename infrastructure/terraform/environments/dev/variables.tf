@@ -38,3 +38,9 @@ variable "jwt_secret" {
   type      = string
   sensitive = true
 }
+
+variable "enable_nat_gateway" {
+  description = "Enable NAT Gateway. Set to false for dev to save ~$32/month."
+  type        = bool
+  default     = false
+}

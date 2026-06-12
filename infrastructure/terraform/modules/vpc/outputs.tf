@@ -17,3 +17,8 @@ output "vpc_cidr_block" {
   description = "The CIDR block of the VPC"
   value       = aws_vpc.main.cidr_block
 }
+
+output "nat_gateway_enabled" {
+  description = "Whether NAT Gateway is enabled"
+  value       = var.enable_nat_gateway
+}

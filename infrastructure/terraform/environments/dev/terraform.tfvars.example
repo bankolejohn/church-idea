@@ -6,6 +6,10 @@ project_name    = "church-cms"
 environment     = "dev"
 container_image = "ghcr.io/bankolejohn/church-idea:latest"
 
+# Cost saving: disable NAT Gateway for dev (~$32/month savings)
+# ECS tasks will get public IPs instead (fine for dev, not for prod)
+enable_nat_gateway = false
+
 # Database credentials (use strong values)
 db_name     = "churchdb"
 db_username = "churchadmin"

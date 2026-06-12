@@ -41,10 +41,18 @@ provider "aws" {
 module "vpc" {
   source = "../../modules/vpc"
 
-  project_name = var.project_name
-  environment  = var.environment
-  vpc_cidr     = "10.0.0.0/16"
-  az_count     = 2
+  project_name       = var.project_name
+  environment        = var.environment
+  vpc_cidr           = "10.0.0.0/16"
+  az_count           = 2
+  enable_nat_gateway = var.enable_nat_gateway
+}
+
+locals {
+  # When NAT is disabled, ECS tasks go in public subnets with public IPs
+  # When NAT is enabled, ECS tasks go in private subnets (production best practice)
+  ecs_subnets      = var.enable_nat_gateway ? module.vpc.private_subnet_ids : module.vpc.public_subnet_ids
+  ecs_public_ip    = !var.enable_nat_gateway
 }
 
 # ─────────────────────────────────────────────
@@ -83,6 +91,8 @@ module "ecs" {
   aws_region            = var.aws_region
   vpc_id                = module.vpc.vpc_id
   private_subnet_ids    = module.vpc.private_subnet_ids
+  task_subnet_ids       = local.ecs_subnets
+  assign_public_ip      = local.ecs_public_ip
   alb_security_group_id = module.alb.alb_security_group_id
   target_group_arn      = module.alb.target_group_arn
 
