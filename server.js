@@ -44,11 +44,11 @@ app.use(helmet({
             objectSrc: ["'none'"],
             frameAncestors: ["'none'"],
             baseUri: ["'self'"],
-            formAction: ["'self'"]
+            formAction: ["'self'"],
+            upgradeInsecureRequests: process.env.ENABLE_HTTPS === 'true' ? [] : null
         }
     },
     crossOriginEmbedderPolicy: false,
-    // Only enable HSTS when actually behind HTTPS (prevents locking out HTTP-only setups)
     strictTransportSecurity: process.env.ENABLE_HTTPS === 'true'
         ? { maxAge: 15552000, includeSubDomains: true }
         : false
