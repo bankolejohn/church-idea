@@ -45,7 +45,7 @@ aws ecs update-service \
 ### Prevention
 
 - Use `depends_on` in Terraform to ensure RDS is fully provisioned before secrets are created
-- Consider using Terraform's `null_resource` with a local-exec provisioner to verify secret availability before creating the ECS service
+- Consider using a Terraform `null_resource` with a local-exec provisioner to verify secret availability before creating the ECS service
 - Implement retry logic in the application for database connection on startup
 
 ---
@@ -189,3 +189,157 @@ aws ecs describe-tasks --cluster church-cms-dev-cluster --tasks <TASK_ARN> \
 - Add migration as a step in the CD pipeline before updating the ECS service
 - Consider using an init container or entrypoint script that runs migrations on startup
 - For production, migrations should be run as a separate pipeline step with rollback capability
+
+---
+
+## Issue #4: Terraform Partial Failure — Secrets Already Scheduled for Deletion
+
+**Date:** June 16, 2026  
+**Environment:** AWS (Terraform apply)  
+**Severity:** Deployment blocked
+
+### Symptoms
+
+- `terraform apply` partially succeeds (VPC, ALB, ECS, RDS created)
+- Secrets Manager resources fail with error:
+  ```
+  InvalidRequestException: You can't create this secret because a secret 
+  with this name is already scheduled for deletion.
+  ```
+
+### Root Cause
+
+AWS Secrets Manager retains deleted secrets for 7-30 days (recovery window). When you `terraform destroy` an environment and then try to recreate it, the secret names conflict because the old ones haven't been fully purged yet.
+
+### Resolution
+
+```bash
+# Step 1: Restore the deleted secrets
+aws secretsmanager restore-secret --secret-id "church-cms/dev/database-url"
+aws secretsmanager restore-secret --secret-id "church-cms/dev/jwt-secret"
+
+# Step 2: Import them into Terraform state
+terraform import 'module.secrets.aws_secretsmanager_secret.database_url' '<SECRET_ARN>'
+terraform import 'module.secrets.aws_secretsmanager_secret.jwt_secret' '<SECRET_ARN>'
+
+# Step 3: Apply again (Terraform now manages the existing secrets)
+terraform apply
+```
+
+### Prevention
+
+- Use `recovery_window_in_days = 0` in the Terraform resource for dev environments (immediate deletion)
+- Or use unique names with timestamps/random suffixes
+- Or wait 7 days before recreating the same environment
+
+### Key Concept: Terraform Partial Apply
+
+Terraform does NOT work like a database transaction. It creates resources independently based on a dependency graph. If resource A fails:
+- Resources that don't depend on A: already created successfully
+- Resources that depend on A: skipped
+
+Running `terraform apply` again only retries the failed resources. Terraform state tracks what exists and what doesn't.
+
+---
+
+## Issue #5: ACM Certificate Not Validated — HTTPS Listener Fails
+
+**Date:** June 16, 2026  
+**Environment:** AWS ALB  
+**Severity:** HTTPS not available
+
+### Symptoms
+
+- `terraform apply` fails on the HTTPS listener with:
+  ```
+  UnsupportedCertificate: The certificate must have a fully-qualified domain name,
+  a supported signature, and a supported key size.
+  ```
+- Certificate status: `PENDING_VALIDATION`
+
+### Root Cause
+
+ACM certificates require DNS validation. You must add a CNAME record to your DNS provider to prove domain ownership. Until the record propagates and AWS validates it, the certificate status stays `PENDING_VALIDATION` and can't be attached to a load balancer.
+
+### Resolution
+
+```bash
+# Step 1: Get the validation DNS record
+aws acm describe-certificate --certificate-arn <CERT_ARN> \
+  --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
+
+# Step 2: Add the CNAME record to your DNS provider (Namecheap, Route53, etc.)
+# Host: _<hash>.subdomain (without the root domain suffix)
+# Value: _<hash>.<hash>.acm-validations.aws.
+
+# Step 3: Wait for validation (5-15 minutes)
+aws acm describe-certificate --certificate-arn <CERT_ARN> \
+  --query 'Certificate.Status'
+# Wait until output is: "ISSUED"
+
+# Step 4: Run terraform apply again
+terraform apply
+```
+
+### Timeline
+
+```
+1. terraform apply creates ACM certificate → Status: PENDING_VALIDATION
+2. Terraform outputs the DNS validation record
+3. You add CNAME to DNS provider
+4. AWS checks DNS (5-15 min) → Status: ISSUED
+5. terraform apply again → HTTPS listener created successfully
+```
+
+### Prevention
+
+- Create the ACM certificate as a separate step before the main infrastructure
+- Use Route53 (AWS DNS) instead of external DNS for automatic validation
+- Accept that first deploy always requires this manual DNS step
+
+---
+
+## Issue #6: Terraform count Depends on Unknown Value
+
+**Date:** June 16, 2026  
+**Environment:** Terraform plan  
+**Severity:** Plan/apply blocked
+
+### Symptoms
+
+```
+Error: Invalid count argument
+The "count" value depends on resource attributes that cannot be determined
+until apply, so Terraform cannot predict how many instances will be created.
+```
+
+### Root Cause
+
+Using a resource attribute (like `aws_acm_certificate.app.arn != ""`) in a `count` argument. Terraform needs to know `count` at plan time, but the ARN isn't known until the resource is actually created.
+
+### Resolution
+
+Use a separate boolean variable instead of deriving the count from a resource attribute:
+
+```hcl
+# BAD: count depends on unknown resource attribute
+count = var.certificate_arn != "" ? 1 : 0
+
+# GOOD: count depends on a known variable
+variable "enable_https" {
+  type    = bool
+  default = false
+}
+count = var.enable_https ? 1 : 0
+```
+
+### Key Concept
+
+Terraform's `count` and `for_each` must be deterministic at plan time. They can depend on:
+- Variables ✅
+- Locals that use only variables ✅
+- Data sources ✅
+
+They cannot depend on:
+- Resource attributes that don't exist yet ❌
+- Outputs from other modules that haven't been applied ❌

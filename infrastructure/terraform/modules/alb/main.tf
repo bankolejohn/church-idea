@@ -83,11 +83,10 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
 
   default_action {
-    type = var.certificate_arn != "" ? "redirect" : "forward"
+    type = var.enable_https ? "redirect" : "forward"
 
-    # Forward to app when no HTTPS
     dynamic "forward" {
-      for_each = var.certificate_arn == "" ? [1] : []
+      for_each = var.enable_https ? [] : [1]
       content {
         target_group {
           arn = aws_lb_target_group.app.arn
@@ -95,9 +94,8 @@ resource "aws_lb_listener" "http" {
       }
     }
 
-    # Redirect to HTTPS when cert is available
     dynamic "redirect" {
-      for_each = var.certificate_arn != "" ? [1] : []
+      for_each = var.enable_https ? [1] : []
       content {
         port        = "443"
         protocol    = "HTTPS"
@@ -107,9 +105,9 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# HTTPS listener (only created when certificate is provided)
+# HTTPS listener (only created when HTTPS is enabled)
 resource "aws_lb_listener" "https" {
-  count             = var.certificate_arn != "" ? 1 : 0
+  count             = var.enable_https ? 1 : 0
   load_balancer_arn = aws_lb.main.arn
   port              = 443
   protocol          = "HTTPS"

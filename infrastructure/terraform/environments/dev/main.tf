@@ -95,6 +95,7 @@ module "alb" {
   vpc_id            = module.vpc.vpc_id
   public_subnet_ids = module.vpc.public_subnet_ids
   container_port    = 3000
+  enable_https      = true
   certificate_arn   = aws_acm_certificate.app.arn
 }
 

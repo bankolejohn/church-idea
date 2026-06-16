@@ -1,6 +1,8 @@
-# LinkedIn Post
+# LinkedIn Posts
 
 ---
+
+## Post 1: Security Headers Breaking HTTP Deployments
 
 **🚨 A Security Header Broke My Entire Application — And No Errors Were Thrown**
 
@@ -56,3 +58,80 @@ This is the kind of issue that doesn't show up in staging when both environments
 ---
 
 #DevOps #AWS #ECS #Troubleshooting #Security #WebDevelopment #Helmet #NodeJS #Infrastructure
+
+---
+
+## Post 2: Terraform Partial Failures and HTTPS on AWS ECS
+
+**🔧 Deployed to AWS ECS. Terraform half-succeeded. Secrets conflicted. Certificate wasn't validated. Here's how I recovered without starting over.**
+
+Deploying a Node.js app to AWS ECS with Terraform. Expected a clean `terraform apply`. Got a partial failure instead. Here's what happened and how to handle it like a professional.
+
+**The scenario:**
+
+Running `terraform apply` to create 37 AWS resources: VPC, subnets, ALB, ECS Fargate, RDS PostgreSQL, Secrets Manager, ACM certificate, HTTPS listener.
+
+Result: 28 resources created. 3 failed. Terraform stopped those branches of the dependency graph but everything else succeeded.
+
+**Failure 1: Secrets Manager name conflict**
+
+```
+InvalidRequestException: You can't create this secret because a secret 
+with this name is already scheduled for deletion.
+```
+
+AWS keeps deleted secrets for 7 days. I had destroyed the previous environment, and the secret names were still reserved.
+
+Fix:
+```bash
+aws secretsmanager restore-secret --secret-id "my-app/dev/database-url"
+terraform import 'module.secrets.aws_secretsmanager_secret.database_url' '<ARN>'
+terraform apply  # Now manages the existing secret
+```
+
+**Failure 2: ACM certificate not yet validated**
+
+The HTTPS listener failed because the SSL certificate was still `PENDING_VALIDATION`. ACM uses DNS validation — I needed to add a CNAME record to my domain registrar first.
+
+Fix:
+```bash
+# Get the validation record
+aws acm describe-certificate --certificate-arn <ARN> \
+  --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
+
+# Add CNAME to DNS provider, wait 5-15 min
+# Then:
+terraform apply  # HTTPS listener creates successfully
+```
+
+**Failure 3: Terraform count depends on unknown value**
+
+```
+Error: Invalid count argument — depends on resource attributes 
+that cannot be determined until apply
+```
+
+I was using `count = var.certificate_arn != "" ? 1 : 0` but the ARN isn't known at plan time.
+
+Fix: Use a separate boolean variable:
+```hcl
+variable "enable_https" { type = bool }
+count = var.enable_https ? 1 : 0
+```
+
+**Key takeaways for aspiring DevOps engineers:**
+
+1. Terraform is NOT atomic. Partial failures are normal. Learn to recover, not restart.
+2. `terraform import` is your friend — it brings existing resources under Terraform management without recreating them.
+3. ACM certificate validation is a two-step process: create cert → add DNS record → wait → apply again. First deploys always need this.
+4. AWS Secrets Manager has a 7-day deletion window. Plan for it or set `recovery_window_in_days = 0` in dev.
+5. Never use resource attributes in `count`/`for_each` — use variables instead.
+6. After partial failure: don't panic, don't `terraform destroy`. Just fix the issue and `apply` again. Terraform knows what exists.
+
+The infra is now running: VPC + ALB + ECS Fargate + RDS + ACM + HTTPS — all defined in code, reproducible, and serving traffic over TLS 1.3.
+
+Total time from first failure to full recovery: 20 minutes. No resources were recreated unnecessarily. That's the power of declarative infrastructure.
+
+---
+
+#DevOps #Terraform #AWS #ECS #Infrastructure #CloudEngineering #IaC #Troubleshooting

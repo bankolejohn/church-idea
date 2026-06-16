@@ -24,3 +24,9 @@ variable "certificate_arn" {
   type        = string
   default     = ""
 }
+
+variable "enable_https" {
+  description = "Enable HTTPS listener (certificate_arn must also be provided)"
+  type        = bool
+  default     = false
+}
