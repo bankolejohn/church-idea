@@ -146,7 +146,8 @@ resource "aws_ecs_task_definition" "app" {
       { name = "PORT", value = tostring(var.container_port) },
       { name = "DB_SSL", value = "true" },
       { name = "DB_POOL_MAX", value = "20" },
-      { name = "LOG_LEVEL", value = var.environment == "prod" ? "info" : "debug" }
+      { name = "LOG_LEVEL", value = var.environment == "prod" ? "info" : "debug" },
+      { name = "ENABLE_HTTPS", value = var.enable_https ? "true" : "false" }
     ]
 
     secrets = [

@@ -18,3 +18,9 @@ variable "container_port" {
   type    = number
   default = 3000
 }
+
+variable "certificate_arn" {
+  description = "ACM certificate ARN for HTTPS. If empty, only HTTP listener is created."
+  type        = string
+  default     = ""
+}

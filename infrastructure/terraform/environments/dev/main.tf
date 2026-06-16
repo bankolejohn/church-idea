@@ -68,6 +68,23 @@ module "secrets" {
 }
 
 # ─────────────────────────────────────────────
+# SSL Certificate (ACM)
+# ─────────────────────────────────────────────
+resource "aws_acm_certificate" "app" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+
+  tags = {
+    Name        = "${var.project_name}-${var.environment}-cert"
+    Environment = var.environment
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# ─────────────────────────────────────────────
 # Load Balancer
 # ─────────────────────────────────────────────
 module "alb" {
@@ -78,6 +95,7 @@ module "alb" {
   vpc_id            = module.vpc.vpc_id
   public_subnet_ids = module.vpc.public_subnet_ids
   container_port    = 3000
+  certificate_arn   = aws_acm_certificate.app.arn
 }
 
 # ─────────────────────────────────────────────
@@ -107,6 +125,7 @@ module "ecs" {
   database_url_secret_arn = module.secrets.database_url_arn
   jwt_secret_arn          = module.secrets.jwt_secret_arn
 
+  enable_https       = true
   log_retention_days = 7
 }
 

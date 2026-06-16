@@ -44,3 +44,9 @@ variable "enable_nat_gateway" {
   type        = bool
   default     = false
 }
+
+variable "domain_name" {
+  description = "Domain name for the application (used for ACM certificate)"
+  type        = string
+  default     = "churchidea.johndesiventures.website"
+}

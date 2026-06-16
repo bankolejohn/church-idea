@@ -90,3 +90,9 @@ variable "jwt_secret_arn" {
   description = "ARN of the JWT_SECRET secret"
   type        = string
 }
+
+variable "enable_https" {
+  description = "Enable HTTPS security headers (HSTS, upgrade-insecure-requests)"
+  type        = bool
+  default     = false
+}
