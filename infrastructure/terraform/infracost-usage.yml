@@ -1,0 +1,29 @@
+# Infracost usage file
+# Defines expected usage for resources that are usage-based (not fixed monthly cost)
+# This helps Infracost give more accurate estimates
+
+version: 0.1
+
+resource_usage:
+  # ALB - estimated request count
+  module.alb.aws_lb.main:
+    monthly_processed_bytes_gb: 1        # 1 GB/month for small app
+    monthly_new_connections: 10000       # ~330/day
+    monthly_active_connections: 100
+
+  # RDS - storage and I/O
+  module.rds.aws_db_instance.main:
+    monthly_additional_storage_gb: 0     # Stays within allocated
+    monthly_io_requests: 100000          # Light usage
+
+  # ECS - already priced by CPU/memory allocation (no usage needed)
+
+  # NAT Gateway (if enabled)
+  module.vpc.aws_nat_gateway.main[0]:
+    monthly_data_processed_gb: 1         # Minimal outbound
+
+  # Secrets Manager
+  module.secrets.aws_secretsmanager_secret.database_url:
+    monthly_api_requests: 1000
+  module.secrets.aws_secretsmanager_secret.jwt_secret:
+    monthly_api_requests: 1000
