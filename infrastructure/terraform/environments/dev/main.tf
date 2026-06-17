@@ -13,14 +13,14 @@ terraform {
     }
   }
 
-  # Remote state - uncomment when S3 backend is created
-  # backend "s3" {
-  #   bucket         = "church-cms-terraform-state"
-  #   key            = "dev/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   dynamodb_table = "terraform-locks"
-  #   encrypt        = true
-  # }
+  # Remote state
+  backend "s3" {
+    bucket         = "church-cms-terraform-state-547624429131"
+    key            = "dev/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "church-cms-terraform-locks"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
