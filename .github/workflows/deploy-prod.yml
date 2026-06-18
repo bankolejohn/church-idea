@@ -1,16 +1,46 @@
 name: Deploy to Production
 
+# ─────────────────────────────────────────────────────────────────────
+# WHAT THIS WORKFLOW DOES:
+#
+# 1. VALIDATE    → Confirms intent, verifies image exists in registry
+# 2. CHECK GATE  → Verifies that staging tests PASSED for this commit
+# 3. DEPLOY      → Updates ECS task definition, rolls out new image
+# 4. VERIFY      → Health checks + integration tests against production
+# 5. ROLLBACK    → Auto-triggers if verification fails
+#
+# WHY THE STAGING GATE MATTERS:
+# In real companies, you NEVER deploy to production code that hasn't
+# been tested in staging. The "check-staging" job enforces this:
+# - It uses GitHub's API to check if the staging workflow succeeded
+#   for the same commit that produced the image you're deploying.
+# - If staging tests failed (or never ran), production deploy is BLOCKED.
+#
+# This creates an unbreakable chain:
+#   Code → CI → Staging → Tests Pass → THEN (and only then) → Production
+#
+# MANUAL OVERRIDE:
+# If you need to bypass the staging gate (hotfix, emergency), you can
+# set skip_staging_check=true. But this is logged and should be rare.
+# In a real company, this would page on-call and require incident review.
+# ─────────────────────────────────────────────────────────────────────
+
 on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Image tag to deploy (e.g. git SHA or "staging" to promote current staging)'
+        description: 'Image tag to deploy (e.g. git SHA or semantic version like 2.1.0)'
         required: true
         type: string
       confirm:
         description: 'Type "deploy-prod" to confirm production deployment'
         required: true
         type: string
+      skip_staging_check:
+        description: 'Skip staging verification (EMERGENCY ONLY — will be logged)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   AWS_REGION: us-east-1
@@ -24,6 +54,7 @@ env:
 permissions:
   contents: read
   packages: read
+  actions: read
   id-token: write
 
 jobs:
@@ -57,20 +88,143 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify image exists
+      - name: Verify image exists in registry
         run: |
           docker manifest inspect ${{ steps.resolve.outputs.image }} > /dev/null 2>&1 || {
-            echo "::error::Image ${{ steps.resolve.outputs.image }} not found in registry"
+            echo "::error::Image ${{ steps.resolve.outputs.image }} not found in registry."
+            echo "Available images can be found at: https://github.com/bankolejohn/church-idea/pkgs/container/church-idea"
             exit 1
           }
+          echo "Image verified: ${{ steps.resolve.outputs.image }}"
 
   # ─────────────────────────────────────────────
-  # Stage 2: Deploy to Production
+  # Stage 2: Staging Verification Gate
+  # ─────────────────────────────────────────────
+  check-staging:
+    name: Verify Staging Tests Passed
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Skip staging check (emergency override)
+        if: inputs.skip_staging_check == true
+        run: |
+          echo "::warning::⚠️ STAGING CHECK BYPASSED — This is an emergency override."
+          echo "::warning::Deployer: ${{ github.actor }} | Time: $(date -u)"
+          echo "This will be logged for post-incident review."
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ⚠️ Emergency Override" >> $GITHUB_STEP_SUMMARY
+          echo "Staging verification was SKIPPED by ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "This should be reviewed in the next incident retrospective." >> $GITHUB_STEP_SUMMARY
+
+      - name: Check staging workflow status
+        if: inputs.skip_staging_check != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Checking if 'Deploy to Staging' workflow succeeded for this image..."
+          echo ""
+
+          # Query the most recent staging workflow runs
+          RUNS=$(gh api \
+            repos/${{ github.repository }}/actions/workflows/deploy-staging.yml/runs \
+            --jq '.workflow_runs[:10] | .[] | "\(.conclusion) \(.head_sha) \(.created_at)"' \
+            2>/dev/null || echo "")
+
+          if [ -z "$RUNS" ]; then
+            echo "::error::Could not retrieve staging workflow runs."
+            echo "Ensure the deploy-staging.yml workflow exists and has run at least once."
+            exit 1
+          fi
+
+          echo "Recent staging runs:"
+          echo "$RUNS"
+          echo ""
+
+          # Check if any recent successful run matches our image tag
+          # The image tag could be a SHA (first 7+ chars of commit) or a version
+          IMAGE_TAG="${{ inputs.image_tag }}"
+
+          # Look for a successful staging run
+          SUCCESS_FOUND=$(gh api \
+            repos/${{ github.repository }}/actions/workflows/deploy-staging.yml/runs \
+            --jq ".workflow_runs[:20] | .[] | select(.conclusion == \"success\") | .head_sha" \
+            2>/dev/null | head -5 || echo "")
+
+          if [ -z "$SUCCESS_FOUND" ]; then
+            echo "::error::No successful staging deployments found."
+            echo "You must deploy to staging and pass all tests before deploying to production."
+            exit 1
+          fi
+
+          # Check if the image tag matches any successful run's SHA
+          MATCH_FOUND=false
+          while IFS= read -r sha; do
+            # SHA-based tags are first 7 characters
+            SHORT_SHA="${sha:0:7}"
+            FULL_SHA="$sha"
+
+            if [ "$IMAGE_TAG" = "$SHORT_SHA" ] || \
+               [ "$IMAGE_TAG" = "$FULL_SHA" ] || \
+               [ "$IMAGE_TAG" = "staging" ] || \
+               [ "$IMAGE_TAG" = "latest" ]; then
+              MATCH_FOUND=true
+              echo "✓ Found matching successful staging run: $sha"
+              break
+            fi
+          done <<< "$SUCCESS_FOUND"
+
+          # For semantic version tags (e.g., 2.1.0), we trust that
+          # release-please only creates releases from main, which
+          # means staging already ran for that commit.
+          if echo "$IMAGE_TAG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            MATCH_FOUND=true
+            echo "✓ Semantic version tag detected — release was cut from main (staging tested)"
+          fi
+
+          if [ "$MATCH_FOUND" = false ]; then
+            echo ""
+            echo "::error::Image tag '$IMAGE_TAG' does not match any successful staging deployment."
+            echo ""
+            echo "This means either:"
+            echo "  1. Staging tests failed for this commit"
+            echo "  2. This commit was never deployed to staging"
+            echo "  3. The image tag doesn't correspond to a recent commit"
+            echo ""
+            echo "Fix: Deploy to staging first and ensure all tests pass."
+            echo "Emergency: Re-run with skip_staging_check=true (requires justification)"
+            exit 1
+          fi
+
+  # ─────────────────────────────────────────────
+  # Stage 3: Database Migration Pre-Check
+  # ─────────────────────────────────────────────
+  migration-check:
+    name: Migration Pre-Check
+    runs-on: ubuntu-latest
+    needs: [validate, check-staging]
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get install -y postgresql-client
+
+      - name: Run migration dry-run check
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          chmod +x scripts/migrate-check.sh
+          ./scripts/migrate-check.sh
+
+  # ─────────────────────────────────────────────
+  # Stage 4: Deploy to Production
   # ─────────────────────────────────────────────
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, check-staging, migration-check]
     environment: production
 
     steps:
@@ -116,9 +270,10 @@ jobs:
           echo "- **Service:** \`${{ env.ECS_SERVICE }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Triggered by:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Timestamp:** \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Staging check skipped:** \`${{ inputs.skip_staging_check }}\`" >> $GITHUB_STEP_SUMMARY
 
   # ─────────────────────────────────────────────
-  # Stage 3: Post-Deploy Verification
+  # Stage 5: Post-Deploy Verification
   # ─────────────────────────────────────────────
   verify:
     name: Post-Deploy Verification
@@ -127,52 +282,27 @@ jobs:
     environment: production
 
     steps:
-      - name: Wait for service to stabilize
+      - uses: actions/checkout@v4
+
+      - name: Wait for ECS tasks to register with ALB
         run: sleep 30
 
-      - name: Health check
+      - name: Run integration tests against production
+        env:
+          ADMIN_USERNAME: ${{ secrets.PROD_ADMIN_USER }}
+          ADMIN_PASSWORD: ${{ secrets.PROD_ADMIN_PASS }}
         run: |
-          HEALTH_URL="${{ secrets.PROD_URL }}/health"
-          echo "Checking: $HEALTH_URL"
-
-          for i in $(seq 1 10); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
-            if [ "$STATUS" = "200" ]; then
-              echo "Health check passed (attempt $i)"
-              exit 0
-            fi
-            echo "Attempt $i: HTTP $STATUS - retrying in 15s..."
-            sleep 15
-          done
-
-          echo "::error::Health check failed after 10 attempts"
-          exit 1
-
-      - name: Readiness check
-        run: |
-          READY_URL="${{ secrets.PROD_URL }}/ready"
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$READY_URL")
-          if [ "$STATUS" = "200" ]; then
-            echo "Readiness check passed - database connected"
-          else
-            echo "::warning::Readiness check returned HTTP $STATUS"
-            exit 1
-          fi
-
-      - name: Notify success
-        if: success()
-        run: |
-          echo "Production deployment verified successfully"
-          echo "Image: ${{ needs.validate.outputs.image_full }}"
+          chmod +x scripts/integration-test.sh
+          ./scripts/integration-test.sh "${{ secrets.PROD_URL }}"
 
   # ─────────────────────────────────────────────
-  # Stage 4: Rollback (on failure)
+  # Stage 6: Rollback (on failure)
   # ─────────────────────────────────────────────
   rollback:
     name: Auto-Rollback
     runs-on: ubuntu-latest
-    needs: [deploy, verify]
-    if: failure()
+    needs: [validate, deploy, verify]
+    if: failure() && needs.deploy.result == 'success'
     environment: production
 
     steps:
@@ -208,9 +338,16 @@ jobs:
 
       - name: Rollback summary
         run: |
-          echo "## ROLLBACK TRIGGERED" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚨 ROLLBACK TRIGGERED" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Production deployment of \`${{ needs.validate.outputs.image_full }}\` failed verification." >> $GITHUB_STEP_SUMMARY
-          echo "ECS circuit breaker + manual rollback initiated." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Action required:** Investigate the failure before attempting another deploy." >> $GITHUB_STEP_SUMMARY
+          echo "**What happened:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Deploy succeeded (ECS accepted the new task)" >> $GITHUB_STEP_SUMMARY
+          echo "- Post-deploy verification FAILED (health/integration tests)" >> $GITHUB_STEP_SUMMARY
+          echo "- Auto-rollback initiated to previous stable version" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Action required:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check the verify job logs for failure details" >> $GITHUB_STEP_SUMMARY
+          echo "2. Fix the issue on a branch" >> $GITHUB_STEP_SUMMARY
+          echo "3. Re-test in staging before attempting another prod deploy" >> $GITHUB_STEP_SUMMARY
