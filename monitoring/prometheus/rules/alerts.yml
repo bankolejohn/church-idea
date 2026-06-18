@@ -1,0 +1,199 @@
+# ──────────────────────────────────────────────────────────────────────
+# Prometheus Alerting Rules
+#
+# HOW ALERTING WORKS:
+# 1. Prometheus evaluates these rules every 15s (evaluation_interval)
+# 2. If a condition is true for the `for` duration, the alert FIRES
+# 3. Prometheus sends the alert to Alertmanager
+# 4. Alertmanager routes it (PagerDuty, Slack, email, etc.)
+#
+# ALERT SEVERITY LEVELS (industry standard):
+# - critical (P1): Service is DOWN. Users are impacted NOW. Page on-call.
+# - warning (P2): Service is degraded. Will become critical if not addressed.
+# - info (P3): Noteworthy but not urgent. Review next business day.
+#
+# THE "FOR" CLAUSE:
+# Prevents alert flapping. A brief spike shouldn't wake someone up at 3am.
+# "for: 5m" means the condition must be true for 5 CONTINUOUS minutes.
+#
+# GOLDEN SIGNALS (Google SRE):
+# These alerts are organized around the four golden signals:
+# 1. Latency — How long requests take
+# 2. Traffic — How much demand is hitting the service
+# 3. Errors — Rate of failed requests
+# 4. Saturation — How full the resources are (CPU, memory, connections)
+# ──────────────────────────────────────────────────────────────────────
+
+groups:
+  # ─── Availability ────────────────────────────────────────────────
+  - name: availability
+    rules:
+      - alert: ServiceDown
+        expr: up{job="church-cms"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Church CMS is DOWN"
+          description: "The application has been unreachable for more than 1 minute. Prometheus cannot scrape the /metrics endpoint."
+          runbook: "Check ECS task status, container logs, and ALB health checks."
+
+      - alert: HighRestartRate
+        expr: changes(churchcms_process_start_time_seconds[1h]) > 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Application restarting frequently"
+          description: "The app has restarted {{ $value }} times in the last hour. Possible crash loop."
+          runbook: "Check container logs for OOM kills, unhandled exceptions, or health check failures."
+
+  # ─── Latency ────────────────────────────────────────────────────
+  - name: latency
+    rules:
+      - alert: HighLatencyP95
+        expr: histogram_quantile(0.95, sum(rate(churchcms_http_request_duration_seconds_bucket[5m])) by (le)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response latency (p95 > 2s)"
+          description: "95th percentile response time is {{ $value | humanizeDuration }}. Users are experiencing slowness."
+          runbook: "Check database query times, event loop lag, and connection pool saturation."
+
+      - alert: CriticalLatencyP99
+        expr: histogram_quantile(0.99, sum(rate(churchcms_http_request_duration_seconds_bucket[5m])) by (le)) > 5
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical response latency (p99 > 5s)"
+          description: "99th percentile response time is {{ $value | humanizeDuration }}. Service is effectively unusable for some users."
+          runbook: "Immediate investigation needed. Check for DB locks, resource exhaustion, or downstream failures."
+
+  # ─── Error Rate ─────────────────────────────────────────────────
+  - name: errors
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(churchcms_http_requests_total{status_code=~"5.."}[5m]))
+          / sum(rate(churchcms_http_requests_total[5m])) * 100 > 5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Error rate above 5%"
+          description: "{{ $value | printf \"%.1f\" }}% of requests are returning 5xx errors."
+          runbook: "Check application logs for stack traces. Filter by route to identify the failing endpoint."
+
+      - alert: CriticalErrorRate
+        expr: |
+          sum(rate(churchcms_http_requests_total{status_code=~"5.."}[5m]))
+          / sum(rate(churchcms_http_requests_total[5m])) * 100 > 25
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical error rate above 25%"
+          description: "{{ $value | printf \"%.1f\" }}% of requests are failing. Service is severely degraded."
+          runbook: "Check for recent deployments, database connectivity, and infrastructure issues."
+
+      - alert: HighLoginFailureRate
+        expr: |
+          sum(rate(churchcms_login_attempts_total{status="failure"}[15m]))
+          / sum(rate(churchcms_login_attempts_total[15m])) * 100 > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High login failure rate (>50%)"
+          description: "{{ $value | printf \"%.0f\" }}% of login attempts are failing. Possible brute force attack or auth system issue."
+          runbook: "Check if this is a targeted attack (single IP) or systemic (auth/DB broken). Review rate limiting logs."
+
+  # ─── Saturation (Resources) ─────────────────────────────────────
+  - name: saturation
+    rules:
+      - alert: HighMemoryUsage
+        expr: churchcms_process_resident_memory_bytes / 1024 / 1024 > 450
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage (>450MB)"
+          description: "Process is using {{ $value | printf \"%.0f\" }}MB of memory. Container limit is 512MB. OOM kill imminent."
+          runbook: "Check for memory leaks (growing heap). Consider increasing task memory or investigating leak source."
+
+      - alert: HighCPUUsage
+        expr: rate(churchcms_process_cpu_seconds_total[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage (>80%)"
+          description: "CPU usage is {{ $value | printf \"%.0f\" }}%. Application may be compute-bound."
+          runbook: "Check for expensive queries, tight loops, or need to scale horizontally."
+
+      - alert: DatabasePoolExhausted
+        expr: churchcms_db_pool_waiting_clients > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool exhausted"
+          description: "{{ $value }} clients are waiting for a DB connection. Queries are queuing up."
+          runbook: "Check for long-running queries, connection leaks, or need to increase DB_POOL_MAX."
+
+      - alert: DatabasePoolNearLimit
+        expr: churchcms_db_pool_active_connections > 15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database pool near capacity (>15/20 connections)"
+          description: "{{ $value }} active connections out of 20 max. Pool may exhaust under load."
+          runbook: "Monitor trend. If growing, investigate slow queries or increase pool size."
+
+      - alert: HighEventLoopLag
+        expr: churchcms_nodejs_eventloop_lag_seconds > 0.5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High event loop lag (>500ms)"
+          description: "Event loop lag is {{ $value | humanizeDuration }}. Application is blocking the main thread."
+          runbook: "Look for synchronous operations, heavy computation, or large JSON parsing on the main thread."
+
+  # ─── SLO Burn Rate ──────────────────────────────────────────────
+  - name: slo
+    rules:
+      # SLO: 99.9% availability (43.8 minutes downtime/month budget)
+      # Burn rate alert: consuming error budget 14.4x faster than allowed
+      # This means you'll burn through the monthly budget in ~3 days
+      - alert: SLOBudgetBurnHigh
+        expr: |
+          (
+            sum(rate(churchcms_http_requests_total{status_code=~"5.."}[1h]))
+            / sum(rate(churchcms_http_requests_total[1h]))
+          ) > (14.4 * 0.001)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SLO burn rate critical (14.4x budget)"
+          description: "Error budget is being consumed 14.4x faster than sustainable. At this rate, the monthly budget will be exhausted in ~3 days."
+          runbook: "This is an SLO-based alert. Immediate action required to reduce error rate below 0.1%."
+
+      # Slower burn: 6x budget rate (exhausts in ~7 days)
+      - alert: SLOBudgetBurnSlow
+        expr: |
+          (
+            sum(rate(churchcms_http_requests_total{status_code=~"5.."}[6h]))
+            / sum(rate(churchcms_http_requests_total[6h]))
+          ) > (6 * 0.001)
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SLO burn rate elevated (6x budget)"
+          description: "Error budget is being consumed 6x faster than sustainable. Investigate within the day."
+          runbook: "Review error trends and recent changes. May indicate a degraded dependency or creeping issue."

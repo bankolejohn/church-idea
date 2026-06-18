@@ -1,4 +1,4 @@
-.PHONY: help dev up down build logs migrate seed test clean
+.PHONY: help dev up down build logs migrate seed test clean monitoring monitoring-down
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -36,3 +36,9 @@ status: ## Check service health
 	@curl -s http://localhost:3000/health | python3 -m json.tool 2>/dev/null || echo "App not running"
 	@echo "\nApp readiness:"
 	@curl -s http://localhost:3000/ready | python3 -m json.tool 2>/dev/null || echo "App not ready"
+
+monitoring: ## Start app + full monitoring stack (Prometheus, Grafana, Loki, Jaeger)
+	docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up --build
+
+monitoring-down: ## Stop monitoring stack
+	docker compose -f docker-compose.yml -f docker-compose.monitoring.yml down

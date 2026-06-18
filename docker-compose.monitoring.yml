@@ -1,0 +1,120 @@
+# ──────────────────────────────────────────────────────────────────────
+# Monitoring Stack (Local Development)
+#
+# WHY SEPARATE FROM docker-compose.yml:
+# In real companies, the monitoring stack is separate from the application.
+# You don't want to restart Prometheus when you redeploy your app.
+# This file extends the base docker-compose for local observability.
+#
+# USAGE:
+#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up
+#   OR: make monitoring (we'll add this to the Makefile)
+#
+# WHAT'S INCLUDED:
+# - Prometheus (port 9090) — scrapes metrics, stores time-series data
+# - Grafana (port 3001) — dashboards and visualization
+# - Loki (port 3100) — log aggregation (like CloudWatch Logs but open-source)
+# - Promtail — ships container logs to Loki
+# - Jaeger (port 16686) — distributed tracing UI
+#
+# ARCHITECTURE:
+#
+#   App (:3000)
+#     │
+#     ├── /metrics ──────► Prometheus (:9090) ──► Grafana (:3001)
+#     │                         │
+#     │                    AlertManager (:9093)
+#     │
+#     ├── OTLP traces ──► Jaeger (:4318/16686)
+#     │
+#     └── stdout logs ──► Promtail ──► Loki (:3100) ──► Grafana
+#
+# ──────────────────────────────────────────────────────────────────────
+
+services:
+  # ─────────────────────────────────────────────
+  # Prometheus — Metrics collection and storage
+  # ─────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────
+  # Grafana — Dashboards and visualization
+  # ─────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+
+  # ─────────────────────────────────────────────
+  # Loki — Log aggregation
+  # ─────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.1.0
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # Promtail — Ships logs from containers to Loki
+  # ─────────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:3.1.0
+    volumes:
+      - ./monitoring/promtail/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    restart: unless-stopped
+    depends_on:
+      - loki
+
+  # ─────────────────────────────────────────────
+  # Jaeger — Distributed tracing
+  # ─────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  loki_data:

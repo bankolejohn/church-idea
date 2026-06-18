@@ -1,0 +1,62 @@
+# ──────────────────────────────────────────────────────────────────────
+# Promtail Configuration
+#
+# WHAT PROMTAIL DOES:
+# Promtail is Loki's log shipper. It tails log files (or Docker logs)
+# and pushes them to Loki with labels attached.
+#
+# In Kubernetes: you'd use the Loki helm chart which deploys Promtail
+# as a DaemonSet (one per node) reading /var/log/pods.
+#
+# In Docker Compose: we use the Docker service discovery to auto-discover
+# containers and read their logs via the Docker socket.
+# ──────────────────────────────────────────────────────────────────────
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Extract container name
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      # Extract compose service name
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+      # Extract compose project name
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'project'
+      # Only scrape containers from our compose project
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        regex: 'church-idea'
+        action: keep
+    pipeline_stages:
+      # Try to parse JSON logs (our app outputs JSON in production mode)
+      - json:
+          expressions:
+            level: level
+            message: message
+            timestamp: timestamp
+            requestId: requestId
+            service: service
+      # Use parsed level as a label (enables filtering by log level)
+      - labels:
+          level:
+      # Use the log timestamp instead of ingestion time
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          fallback_formats:
+            - '2006-01-02T15:04:05.999Z'

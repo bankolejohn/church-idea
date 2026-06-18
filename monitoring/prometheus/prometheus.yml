@@ -1,0 +1,53 @@
+# ──────────────────────────────────────────────────────────────────────
+# Prometheus Configuration
+#
+# HOW PROMETHEUS WORKS:
+# Prometheus is a PULL-based system. Unlike push-based systems (StatsD,
+# CloudWatch), Prometheus reaches out to your targets and scrapes metrics.
+#
+# Why pull-based is better for containers:
+# - Services don't need to know where Prometheus lives
+# - If a target disappears, Prometheus detects it immediately
+# - Service discovery is built-in (no registration needed)
+# - Backpressure is handled naturally (Prometheus controls rate)
+#
+# SCRAPE INTERVAL:
+# 15 seconds is the default. This means every metric gets a new data point
+# every 15s. For a small app this is fine. At scale (1000+ targets),
+# you might increase to 30s or 60s to reduce storage/network.
+# ──────────────────────────────────────────────────────────────────────
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+# ─── Alert Rules ──────────────────────────────────────────────────
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+# ─── Scrape Targets ──────────────────────────────────────────────
+scrape_configs:
+  # Application metrics (prom-client on /metrics)
+  - job_name: 'church-cms'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['app:3000']
+        labels:
+          service: 'church-cms'
+          environment: 'development'
+    metrics_path: /metrics
+
+  # OpenTelemetry Prometheus exporter (port 9464)
+  - job_name: 'church-cms-otel'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['app:9464']
+        labels:
+          service: 'church-cms'
+          source: 'opentelemetry'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

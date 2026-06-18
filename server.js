@@ -1,3 +1,9 @@
+// ──────────────────────────────────────────────
+// OpenTelemetry must be loaded FIRST (before any other imports)
+// It patches modules at require-time for auto-instrumentation
+// ──────────────────────────────────────────────
+require('./lib/telemetry');
+
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -11,6 +17,7 @@ require('dotenv').config();
 
 const db = require('./lib/database');
 const logger = require('./lib/logger');
+const metrics = require('./lib/metrics');
 const { validateMember, validateBranch, validatePastor, sanitize, validateId } = require('./lib/validation');
 
 const app = express();
@@ -84,6 +91,9 @@ app.use(cors({
 // Request parsing with size limit
 app.use(express.json({ limit: '1mb' }));
 
+// Prometheus metrics middleware (must be before routes)
+app.use(metrics.httpMiddleware);
+
 // Attach request ID for tracing
 app.use((req, res, next) => {
     req.requestId = req.headers['x-request-id'] || crypto.randomUUID();
@@ -129,6 +139,12 @@ app.get('/ready', async (req, res) => {
         });
     }
 });
+
+// ──────────────────────────────────────────────
+// Prometheus Metrics Endpoint
+// ──────────────────────────────────────────────
+
+app.get('/metrics', metrics.metricsEndpoint);
 
 // ──────────────────────────────────────────────
 // Authentication Middleware
@@ -182,6 +198,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 
         if (!user || !(await bcrypt.compare(password, user.password))) {
             logger.warn('Failed login attempt', { username, requestId: req.requestId });
+            metrics.loginAttemptsTotal.inc({ status: 'failure' });
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
@@ -198,6 +215,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         }
 
         logger.info('User logged in', { username: user.username, role: user.role, requestId: req.requestId });
+        metrics.loginAttemptsTotal.inc({ status: 'success' });
 
         res.json({
             token,
@@ -268,6 +286,7 @@ app.post('/api/branches', authenticateToken, requireRole(['main_leader']), async
         );
 
         logger.info('Branch created', { branch: result.rows[0].name, requestId: req.requestId });
+        metrics.branchesCreatedTotal.inc();
         res.status(201).json(result.rows[0]);
     } catch (error) {
         logger.error('Create branch error', { error: error.message, requestId: req.requestId });
@@ -372,6 +391,7 @@ app.post('/api/members', authenticateToken, requireRole(['branch_pastor']), asyn
         );
 
         logger.info('Member added', { member: name, branch_id, requestId: req.requestId });
+        metrics.membersCreatedTotal.inc({ branch_id: String(branch_id) });
         res.status(201).json(result.rows[0]);
     } catch (error) {
         logger.error('Create member error', { error: error.message, requestId: req.requestId });
@@ -443,6 +463,7 @@ app.delete('/api/members/:id', authenticateToken, requireRole(['branch_pastor'])
         await db.query('DELETE FROM members WHERE id = $1', [memberId]);
 
         logger.info('Member deleted', { memberId, requestId: req.requestId });
+        metrics.membersDeletedTotal.inc({ branch_id: String(existing.rows[0].branch_id) });
         res.json({ message: 'Member deleted successfully' });
     } catch (error) {
         logger.error('Delete member error', { error: error.message, requestId: req.requestId });
@@ -515,6 +536,7 @@ app.post('/api/create-pastor', authenticateToken, requireRole(['main_leader']), 
         );
 
         logger.info('Pastor account created', { username, branch_id, requestId: req.requestId });
+        metrics.pastorAccountsCreatedTotal.inc();
         res.status(201).json({ message: 'Pastor account created successfully', user: result.rows[0] });
     } catch (error) {
         if (error.message.includes('unique') || error.message.includes('duplicate')) {
@@ -540,6 +562,9 @@ app.get('*', (req, res) => {
 let server;
 
 function startServer() {
+    // Track database pool metrics
+    metrics.trackPool(db.pool);
+
     server = app.listen(PORT, '0.0.0.0', () => {
         logger.info('Server started', { port: PORT, env: process.env.NODE_ENV || 'development' });
     });
