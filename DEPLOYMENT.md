@@ -1,7 +1,6 @@
 # Deployment Guide
 
 This document covers how to deploy the Church Management System across all environments.
-It will be updated as the infrastructure evolves.
 
 ---
 
@@ -9,8 +8,12 @@ It will be updated as the infrastructure evolves.
 
 - [Prerequisites](#prerequisites)
 - [Local Development (Docker Compose)](#local-development-docker-compose)
-- [AWS ECS Deployment](#aws-ecs-deployment) *(coming soon)*
-- [AWS EKS Deployment](#aws-eks-deployment) *(coming soon)*
+- [CI/CD Pipeline Overview](#cicd-pipeline-overview)
+- [Deploy to Staging](#deploy-to-staging)
+- [Deploy to Production](#deploy-to-production)
+- [Semantic Versioning & Releases](#semantic-versioning--releases)
+- [AWS ECS Deployment (Infrastructure)](#aws-ecs-deployment)
+- [AWS EKS Deployment](#aws-eks-deployment) *(future)*
 
 ---
 
@@ -149,7 +152,254 @@ make seed
 
 ---
 
+## CI/CD Pipeline Overview
+
+The deployment system uses multiple GitHub Actions workflows working together:
+
+```
+PR opened → ci.yml (lint, test, security scan, build)
+     │
+     ▼
+Merged to main → deploy-staging.yml (auto)
+     │
+     ├── Build & push image to GHCR
+     ├── Migration pre-check (DB connectivity + pending migrations)
+     ├── Deploy to ECS Fargate
+     ├── Integration tests (curl-based, 30s)
+     ├── E2E tests (Cypress, Chrome headless)
+     └── "Staging Verified" ✅
+     │
+     ▼
+release.yml → release-please opens a Release PR
+     │         (bumps version, generates CHANGELOG)
+     ▼
+Release PR merged → Builds versioned image (e.g., 2.1.0)
+     │
+     ▼
+Manual trigger → deploy-prod.yml
+     │
+     ├── Validate (confirm intent + image exists)
+     ├── Staging gate (verify staging passed for this image)
+     ├── Migration pre-check (against prod DB)
+     ├── Deploy to ECS Fargate
+     ├── Post-deploy integration tests
+     └── Auto-rollback on failure
+```
+
+### Workflows
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `ci.yml` | PR + push to main | Lint, test, build, security scan |
+| `deploy-staging.yml` | Push to main | Auto-deploy + full test suite |
+| `deploy-prod.yml` | Manual (workflow_dispatch) | Production deploy with gates |
+| `release.yml` | Push to main | Semantic versioning + changelog |
+| `infracost.yml` | PR (terraform changes) | Cost estimation |
+
+### Required GitHub Secrets
+
+Configure these in repo Settings → Secrets and variables → Actions:
+
+| Secret | Environment | Purpose |
+|--------|-------------|---------|
+| `AWS_ACCESS_KEY_ID` | Both | ECS deploy |
+| `AWS_SECRET_ACCESS_KEY` | Both | ECS deploy |
+| `STAGING_URL` | staging | Base URL for tests (e.g., `https://staging.example.com`) |
+| `STAGING_DATABASE_URL` | staging | Migration pre-check |
+| `STAGING_ADMIN_USER` | staging | E2E test login |
+| `STAGING_ADMIN_PASS` | staging | E2E test login |
+| `PROD_URL` | production | Post-deploy verification |
+| `PROD_DATABASE_URL` | production | Migration pre-check |
+| `PROD_ADMIN_USER` | production | Post-deploy verification |
+| `PROD_ADMIN_PASS` | production | Post-deploy verification |
+
+### GitHub Environments
+
+Create in repo Settings → Environments:
+
+- **staging** — no protection rules (auto-deploys)
+- **production** — add required reviewers for the approval gate
+
+---
+
+## Deploy to Staging
+
+Staging deploys **automatically** on every push to `main`. No action required.
+
+### What Happens
+
+1. Docker image built and pushed to GHCR (tagged with SHA + `staging` + `latest`)
+2. Migration pre-check verifies DB connectivity and flags pending migrations
+3. ECS task definition updated with new image
+4. ECS rolling update (waits for service stability, ~3-5 min)
+5. Integration tests run against live staging URL
+6. Cypress E2E tests verify login, CRUD, security headers
+7. Pipeline marked green = safe to promote to production
+
+### Monitoring a Staging Deploy
+
+```bash
+# Watch the GitHub Actions run
+gh run watch
+
+# Check ECS service status
+aws ecs describe-services \
+  --cluster church-cms-staging-cluster \
+  --services church-cms-staging-service \
+  --query 'services[0].{desired:desiredCount,running:runningCount,status:status}'
+
+# View logs
+aws logs tail /ecs/church-cms-staging --follow
+```
+
+### If Staging Fails
+
+- Check the workflow run for which stage failed
+- Integration test failures → API issue (check logs, DB connectivity)
+- Cypress failures → check uploaded screenshots/videos in workflow artifacts
+- Migration check failure → pending migrations need to be run manually first
+
+---
+
+## Deploy to Production
+
+Production deploys are **manual only** and require the staging pipeline to have passed.
+
+### Prerequisites
+
+1. The staging deploy workflow has passed (green) for the commit you want to deploy
+2. You have a version tag (from release-please) or a commit SHA
+
+### Deploy via CLI
+
+```bash
+# Deploy a specific semantic version (recommended)
+gh workflow run deploy-prod.yml \
+  -f image_tag=2.1.0 \
+  -f confirm=deploy-prod
+
+# Deploy a specific commit SHA
+gh workflow run deploy-prod.yml \
+  -f image_tag=abc1234 \
+  -f confirm=deploy-prod
+
+# Emergency deploy (skips staging check — use only for hotfixes)
+gh workflow run deploy-prod.yml \
+  -f image_tag=2.1.1 \
+  -f confirm=deploy-prod \
+  -f skip_staging_check=true
+```
+
+### Deploy via GitHub UI
+
+1. Go to Actions → "Deploy to Production" → "Run workflow"
+2. Enter the image tag (version or SHA)
+3. Type `deploy-prod` in the confirmation field
+4. Click "Run workflow"
+
+### What Happens
+
+1. **Validate** — confirms intent, verifies image exists in GHCR
+2. **Staging gate** — queries GitHub API to verify staging passed for this image
+3. **Migration check** — verifies prod DB connectivity and checks for pending migrations
+4. **Deploy** — ECS rolling update (waits up to 15 min for stability)
+5. **Verify** — integration tests run against production URL
+6. **Rollback** — if verification fails, auto-reverts to previous task definition
+
+### Rollback (Manual)
+
+If auto-rollback doesn't trigger or you need to manually revert:
+
+```bash
+# Force ECS to redeploy the previous stable task definition
+aws ecs update-service \
+  --cluster church-cms-prod-cluster \
+  --service church-cms-prod-service \
+  --force-new-deployment
+
+# Or deploy a known good version
+gh workflow run deploy-prod.yml \
+  -f image_tag=2.0.0 \
+  -f confirm=deploy-prod \
+  -f skip_staging_check=true
+```
+
+---
+
+## Semantic Versioning & Releases
+
+Versions are managed automatically by [release-please](https://github.com/googleapis/release-please).
+
+### How It Works
+
+1. Merge PRs to main using [conventional commits](https://www.conventionalcommits.org/):
+   - `fix(auth): handle expired tokens` → patch bump (2.0.0 → 2.0.1)
+   - `feat(api): add member search` → minor bump (2.0.0 → 2.1.0)
+   - `feat!: rename API endpoints` → major bump (2.0.0 → 3.0.0)
+2. release-please opens a "Release PR" accumulating changes
+3. When you merge the Release PR, a GitHub Release is created
+4. The release workflow builds and tags the image with the version (e.g., `2.1.0`)
+
+### Checking Current Version
+
+```bash
+# In package.json
+cat package.json | grep version
+
+# Latest release
+gh release list --limit 1
+
+# What's running in prod
+aws ecs describe-task-definition --task-definition church-cms-prod \
+  --query 'taskDefinition.containerDefinitions[0].image'
+```
+
+### Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `.release-please-manifest.json` | Tracks current version |
+| `release-please-config.json` | Controls changelog sections, release type |
+| `.commitlintrc.json` | Enforces conventional commit format |
+
+---
+
+## Running Tests Locally
+
+### Integration Tests (bash/curl)
+
+```bash
+# Against local docker-compose
+./scripts/integration-test.sh http://localhost:3000
+
+# Against staging
+./scripts/integration-test.sh https://staging.yourapp.com
+```
+
+### Cypress E2E Tests
+
+```bash
+# Interactive mode (opens browser)
+npx cypress open --config baseUrl=http://localhost:3000
+
+# Headless mode (like CI)
+npx cypress run --config baseUrl=http://localhost:3000
+
+# Against staging
+CYPRESS_BASE_URL=https://staging.yourapp.com npx cypress run
+```
+
+### Migration Pre-Check
+
+```bash
+DATABASE_URL=postgresql://user:pass@localhost:5432/churchdb ./scripts/migrate-check.sh
+```
+
+---
+
 ## AWS ECS Deployment
+
+> This section covers the **infrastructure** setup. For day-to-day deploys, use the [Deploy to Staging](#deploy-to-staging) and [Deploy to Production](#deploy-to-production) sections above.
 
 ### Prerequisites
 
@@ -286,9 +536,10 @@ terraform destroy
 
 ### Important Notes
 
-- **HTTPS:** Currently HTTP only. To add HTTPS, provision an ACM certificate and add an HTTPS listener to the ALB, then set `ENABLE_HTTPS=true` in the task environment.
+- **HTTPS:** ACM certificate is provisioned via Terraform. DNS validation CNAME must be added to your domain registrar. Once validated, ALB serves HTTPS and `ENABLE_HTTPS=true` is set in the ECS task.
 - **Secrets:** Never in code or Terraform state committed to git. Use `terraform.tfvars` (gitignored) or pass via CLI.
-- **Image:** The CI pipeline pushes to `ghcr.io/bankolejohn/church-idea:develop` on every push to the develop branch.
+- **Image:** The CI pipeline pushes to `ghcr.io/bankolejohn/church-idea` with SHA, `staging`, and `latest` tags. Versioned tags (e.g., `2.1.0`) are created by the release workflow.
+- **Deploy:** Use the deploy workflows (not manual `aws ecs update-service`) for production changes. The workflows include pre-checks and rollback.
 
 ### Known Issues & Solutions
 

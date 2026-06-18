@@ -209,3 +209,48 @@ The state file is not optional infrastructure. It IS your infrastructure.
 ---
 
 #Terraform #DevOps #AWS #S3 #InfrastructureAsCode #CloudEngineering #BestPractices
+
+
+---
+
+## Post 4: Building a Deploy Pipeline That Actually Protects Production
+
+**"It passed staging" isn't a deployment strategy.**
+
+I asked myself: "What stops me from deploying broken code to production at 2am when I'm tired?"
+
+The honest answer: nothing. I had CI running Jest tests and ESLint. I had a staging environment on ECS Fargate. But the path from "code merged" to "running in prod" was just me clicking a button. No verification. No gates. No rollback.
+
+That's not engineering. That's hope.
+
+So I rebuilt the entire delivery pipeline using GitHub Actions, Cypress, and release-please:
+
+**Staging (automatic on merge to main):**
+→ Docker build & push to GHCR → Migration pre-check (psql connectivity + dangerous DDL scan) → Deploy to ECS → Integration tests (bash/curl, 30s) → Cypress E2E (Chrome, headless — tests login, CRUD, security headers) → Verified
+
+**Production (manual trigger only):**
+→ Verify image exists in GHCR → Confirm staging workflow PASSED via GitHub API → Migration pre-check against prod RDS → Deploy to ECS Fargate → Post-deploy integration tests → Auto-rollback if verification fails
+
+**The thinking behind it:**
+
+- Bash curl tests run first (30 seconds). They catch "app is down, DB disconnected, auth broken." Why burn 3 minutes of Cypress if the health endpoint returns 503?
+- Cypress runs second — real Chrome, real user flows. Login, create a member, validate pagination. These catch what curl can't: broken UI state, missing headers, session issues.
+- The staging gate is *enforced*. Production deploy queries GitHub's Actions API to verify staging succeeded for this exact commit SHA. Can't bypass without an emergency override that logs who, when, and why.
+- release-please handles semantic versioning from conventional commits. Every prod release is a tagged image (v2.1.0, not "latest"). You always know what's running.
+- Auto-rollback covers what ECS circuit breakers can't — the "container is healthy but the app is functionally broken" scenario.
+
+Now I merge on Friday and sleep. If something breaks in prod, ECS + my verification pipeline rolls it back in under 2 minutes. No pager. No panic.
+
+**For junior and aspiring DevOps engineers:**
+
+CI protects your codebase. Your deploy pipeline protects your users. They are different concerns that require different tools.
+
+The question isn't "does my code compile?" It's "if I deploy this right now, will users notice?"
+
+Build every pipeline with that question in mind.
+
+---
+
+Stack: GitHub Actions | ECS Fargate | Docker | GHCR | Cypress | Terraform | RDS PostgreSQL | release-please | bash
+
+#DevOps #CICD #GitHubActions #AWS #ECS #Cypress #Deployment #SRE #PipelineEngineering #Terraform
