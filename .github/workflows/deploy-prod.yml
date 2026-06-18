@@ -1,0 +1,216 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (e.g. git SHA or "staging" to promote current staging)'
+        required: true
+        type: string
+      confirm:
+        description: 'Type "deploy-prod" to confirm production deployment'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/bankolejohn/church-idea
+  ECS_CLUSTER: church-cms-prod-cluster
+  ECS_SERVICE: church-cms-prod-service
+  TASK_FAMILY: church-cms-prod
+  CONTAINER_NAME: church-cms-app
+
+permissions:
+  contents: read
+  packages: read
+  id-token: write
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Stage 1: Validation Gate
+  # ─────────────────────────────────────────────
+  validate:
+    name: Validate Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      image_full: ${{ steps.resolve.outputs.image }}
+
+    steps:
+      - name: Confirm deployment intent
+        if: inputs.confirm != 'deploy-prod'
+        run: |
+          echo "::error::Deployment confirmation failed. You must type 'deploy-prod' to confirm."
+          exit 1
+
+      - name: Resolve image tag
+        id: resolve
+        run: |
+          IMAGE="${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}"
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          echo "Resolved image: $IMAGE"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify image exists
+        run: |
+          docker manifest inspect ${{ steps.resolve.outputs.image }} > /dev/null 2>&1 || {
+            echo "::error::Image ${{ steps.resolve.outputs.image }} not found in registry"
+            exit 1
+          }
+
+  # ─────────────────────────────────────────────
+  # Stage 2: Deploy to Production
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: validate
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.TASK_FAMILY }} \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update image in task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.validate.outputs.image_full }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 15
+
+      - name: Deployment summary
+        run: |
+          echo "## Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** \`${{ needs.validate.outputs.image_full }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cluster:** \`${{ env.ECS_CLUSTER }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service:** \`${{ env.ECS_SERVICE }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp:** \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────
+  # Stage 3: Post-Deploy Verification
+  # ─────────────────────────────────────────────
+  verify:
+    name: Post-Deploy Verification
+    runs-on: ubuntu-latest
+    needs: deploy
+    environment: production
+
+    steps:
+      - name: Wait for service to stabilize
+        run: sleep 30
+
+      - name: Health check
+        run: |
+          HEALTH_URL="${{ secrets.PROD_URL }}/health"
+          echo "Checking: $HEALTH_URL"
+
+          for i in $(seq 1 10); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (attempt $i)"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS - retrying in 15s..."
+            sleep 15
+          done
+
+          echo "::error::Health check failed after 10 attempts"
+          exit 1
+
+      - name: Readiness check
+        run: |
+          READY_URL="${{ secrets.PROD_URL }}/ready"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$READY_URL")
+          if [ "$STATUS" = "200" ]; then
+            echo "Readiness check passed - database connected"
+          else
+            echo "::warning::Readiness check returned HTTP $STATUS"
+            exit 1
+          fi
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "Production deployment verified successfully"
+          echo "Image: ${{ needs.validate.outputs.image_full }}"
+
+  # ─────────────────────────────────────────────
+  # Stage 4: Rollback (on failure)
+  # ─────────────────────────────────────────────
+  rollback:
+    name: Auto-Rollback
+    runs-on: ubuntu-latest
+    needs: [deploy, verify]
+    if: failure()
+    environment: production
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Rollback ECS service
+        run: |
+          echo "::warning::Deployment verification failed. Initiating rollback..."
+
+          # ECS circuit breaker handles rollback automatically,
+          # but we force a redeployment of the previous task definition as a safety net
+          PREVIOUS_TASK_DEF=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query 'services[0].deployments[?status==`ACTIVE`].taskDefinition | [0]' \
+            --output text)
+
+          if [ "$PREVIOUS_TASK_DEF" != "None" ] && [ -n "$PREVIOUS_TASK_DEF" ]; then
+            echo "Rolling back to: $PREVIOUS_TASK_DEF"
+            aws ecs update-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service ${{ env.ECS_SERVICE }} \
+              --task-definition "$PREVIOUS_TASK_DEF" \
+              --force-new-deployment
+          else
+            echo "No previous deployment found. ECS circuit breaker should handle rollback."
+          fi
+
+      - name: Rollback summary
+        run: |
+          echo "## ROLLBACK TRIGGERED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Production deployment of \`${{ needs.validate.outputs.image_full }}\` failed verification." >> $GITHUB_STEP_SUMMARY
+          echo "ECS circuit breaker + manual rollback initiated." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Action required:** Investigate the failure before attempting another deploy." >> $GITHUB_STEP_SUMMARY
