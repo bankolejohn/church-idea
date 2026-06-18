@@ -13,6 +13,7 @@ This document covers how to deploy the Church Management System across all envir
 - [Deploy to Production](#deploy-to-production)
 - [Semantic Versioning & Releases](#semantic-versioning--releases)
 - [AWS ECS Deployment (Infrastructure)](#aws-ecs-deployment)
+- [Observability & Monitoring](#observability--monitoring)
 - [AWS EKS Deployment](#aws-eks-deployment) *(future)*
 
 ---
@@ -547,6 +548,115 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for detailed resolution o
 - ECS task secret retrieval failures on first deploy
 - HSTS/CSP headers breaking HTTP-only deployments
 - Database migration execution on ECS
+
+---
+
+## Observability & Monitoring
+
+### Overview
+
+The application is instrumented with a full observability stack covering the three pillars:
+
+| Pillar | Tool | Purpose |
+|--------|------|---------|
+| Metrics | Prometheus + prom-client | Time-series data (latency, request rate, resource usage) |
+| Logs | Loki + Promtail + Winston | Structured JSON logs with trace correlation |
+| Traces | Jaeger + OpenTelemetry | Distributed request tracing across Express → PostgreSQL |
+| Visualization | Grafana | Dashboards, log exploration, trace viewing |
+
+### Running the Monitoring Stack (Local)
+
+```bash
+# Start app + database + full monitoring stack
+make monitoring
+
+# Stop everything
+make monitoring-down
+```
+
+### Accessing Monitoring Tools
+
+| Tool | URL | Credentials |
+|------|-----|-------------|
+| Application | http://localhost:3000 | admin/admin123 |
+| Grafana | http://localhost:3001 | admin/admin |
+| Prometheus | http://localhost:9090 | — |
+| Jaeger UI | http://localhost:16686 | — |
+| App Metrics | http://localhost:3000/metrics | — |
+
+### Pre-Built Grafana Dashboards
+
+Three dashboards are auto-provisioned when Grafana starts:
+
+1. **Application Overview** — Request rate, p50/p95/p99 latency, error rate, uptime, requests by route
+2. **Infrastructure** — CPU usage, memory/heap, event loop lag, DB connection pool, garbage collection
+3. **Business KPIs** — Login success/failure, members created, branches, pastor accounts
+
+### Prometheus Metrics Exposed
+
+The app exposes metrics at `GET /metrics`:
+
+| Metric | Type | What It Measures |
+|--------|------|-----------------|
+| `churchcms_http_request_duration_seconds` | Histogram | Response time distribution |
+| `churchcms_http_requests_total` | Counter | Total requests by method/route/status |
+| `churchcms_http_active_requests` | Gauge | In-flight requests |
+| `churchcms_db_pool_active_connections` | Gauge | Active DB connections |
+| `churchcms_db_pool_waiting_clients` | Gauge | Clients waiting for a connection |
+| `churchcms_login_attempts_total` | Counter | Login attempts (success/failure) |
+| `churchcms_members_created_total` | Counter | Members added by branch |
+| `churchcms_branches_created_total` | Counter | Branches created |
+| `churchcms_process_*` | Various | Node.js runtime metrics (CPU, memory, GC) |
+
+### Alerting Rules
+
+Alerts fire when conditions persist for the configured duration:
+
+| Alert | Condition | Severity |
+|-------|-----------|----------|
+| ServiceDown | App unreachable for 1m | Critical |
+| HighLatencyP95 | p95 > 2s for 5m | Warning |
+| CriticalLatencyP99 | p99 > 5s for 3m | Critical |
+| HighErrorRate | 5xx > 5% for 3m | Warning |
+| CriticalErrorRate | 5xx > 25% for 2m | Critical |
+| DatabasePoolExhausted | >5 waiting clients for 2m | Critical |
+| HighMemoryUsage | RSS > 450MB for 5m | Warning |
+| SLOBudgetBurnHigh | Error budget burn 14.4x for 5m | Critical |
+
+### Querying Logs in Grafana (LogQL)
+
+```logql
+# All error logs
+{service="church-cms"} | json | level="error"
+
+# Logs for a specific request
+{service="church-cms"} | json | requestId="abc-123"
+
+# Login failures
+{service="church-cms"} | json | message="Failed login attempt"
+
+# Error rate over time
+rate({service="church-cms"} | json | level="error" [5m])
+```
+
+### Tracing a Request (Jaeger)
+
+1. Open Jaeger at http://localhost:16686
+2. Select service: `church-cms`
+3. Click "Find Traces"
+4. Click a trace to see the full request lifecycle:
+   - Express middleware → Route handler → PostgreSQL query → Response
+
+### Environment Variables (Observability)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OTEL_ENABLED` | `true` | Enable/disable OpenTelemetry |
+| `OTEL_SERVICE_NAME` | `church-cms` | Service name in traces |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP collector endpoint |
+| `PROMETHEUS_METRICS_PORT` | `9464` | OTel Prometheus exporter port |
+| `LOG_FORMAT` | auto | Force `json` for structured output |
+| `LOG_LEVEL` | `info` | Minimum log level |
 
 ---
 
