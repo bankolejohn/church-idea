@@ -3,11 +3,13 @@ services:
     build: .
     ports:
       - "3000:3000"
+      - "9464:9464"
     env_file:
       - .env
     environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       - OTEL_SERVICE_NAME=church-cms
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
       - PROMETHEUS_METRICS_PORT=9464
     depends_on:
       db:
@@ -16,9 +18,9 @@ services:
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
       interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   db:
     image: postgres:16-alpine
