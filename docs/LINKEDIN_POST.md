@@ -254,3 +254,66 @@ Build every pipeline with that question in mind.
 Stack: GitHub Actions | ECS Fargate | Docker | GHCR | Cypress | Terraform | RDS PostgreSQL | release-please | bash
 
 #DevOps #CICD #GitHubActions #AWS #ECS #Cypress #Deployment #SRE #PipelineEngineering #Terraform
+
+
+---
+
+## Post 5: The Health Check That Was Always Broken (And Nobody Knew)
+
+**My Docker container was "unhealthy" for weeks. The app worked perfectly. Here's how I found out.**
+
+I added a monitoring stack (Prometheus, Grafana, Loki, Jaeger) to a Node.js app running on Alpine Linux. Configured the monitoring services to depend on the app being healthy.
+
+They refused to start. "dependency failed to start: container is unhealthy."
+
+But the app was clearly running. Logs showed "Server started." I could curl it from my laptop. Health endpoint returned 200. What's going on?
+
+Ran the health check manually inside the container:
+
+```
+$ wget http://localhost:3000/health
+Connecting to localhost:3000 ([::1]:3000)
+Connection refused
+```
+
+There it is. `[::1]` — that's IPv6.
+
+**The root cause:**
+
+Alpine Linux resolves `localhost` to `::1` (IPv6 loopback first). My Node.js app was listening on `0.0.0.0:3000` (IPv4 only). The health check was connecting to an address where nothing was listening.
+
+The fix: one character change.
+
+```yaml
+# Before (broken on Alpine)
+test: ["CMD", "wget", "http://localhost:3000/health"]
+
+# After (works everywhere)
+test: ["CMD", "wget", "http://127.0.0.1:3000/health"]
+```
+
+**Why nobody noticed before:**
+
+The health check had been failing since day one. But nothing in the docker-compose depended on it. The app ran fine, served traffic fine. Docker quietly marked it "unhealthy" in the background — invisible until another service actually checked.
+
+Adding `depends_on: condition: service_healthy` for the monitoring stack exposed a bug that was always there.
+
+**For junior and aspiring DevOps engineers:**
+
+Three lessons from this one bug:
+
+1. Never use `localhost` in container health checks. Use `127.0.0.1`. Alpine, BusyBox, and minimal images resolve hostnames differently than Ubuntu or macOS.
+
+2. Test your health checks independently. Run them manually inside the container: `docker compose exec app <your-health-check-command>`. Don't assume they work just because the app is running.
+
+3. Silent failures are the most dangerous kind. This health check was broken for weeks. No error in logs. No crash. No alert. Just a quiet "unhealthy" label that nothing was reading — until something was.
+
+The monitoring stack that exposed this bug? OpenTelemetry + Prometheus + Grafana + Loki + Jaeger. All running locally with one command. Now I can see latency percentiles, trace individual requests through Express → PostgreSQL, correlate logs to traces, and get alerted before users notice.
+
+That's the difference between "it works on my machine" and "I know it's working in production."
+
+---
+
+Stack: Docker | Alpine Linux | Node.js | OpenTelemetry | Prometheus | Grafana | Loki | Jaeger
+
+#DevOps #Docker #Troubleshooting #Observability #Monitoring #AlpineLinux #SRE #ContainerHealth #Prometheus #Grafana

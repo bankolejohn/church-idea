@@ -343,3 +343,124 @@ Terraform's `count` and `for_each` must be deterministic at plan time. They can 
 They cannot depend on:
 - Resource attributes that don't exist yet ❌
 - Outputs from other modules that haven't been applied ❌
+
+## Issue #4: OpenTelemetry SDK 2.x Breaking Change — Resource Constructor Removed
+
+**Date:** June 22, 2026  
+**Environment:** Docker (local development)  
+**Severity:** Application crash on startup
+
+### Symptoms
+
+- Container starts, immediately crashes
+- Exit code 1
+- No health check passes (container marked unhealthy)
+
+### Error Message
+
+```
+/app/lib/telemetry.js:62
+const resource = new Resource({
+                 ^
+
+TypeError: Resource is not a constructor
+    at Object.<anonymous> (/app/lib/telemetry.js:62:18)
+```
+
+### Root Cause
+
+OpenTelemetry JS SDK 2.x (released February 2025) introduced a breaking change: the `Resource` class is no longer exported from `@opentelemetry/resources`. The package now exports utility functions instead.
+
+This is part of a broader trend in the OTel JS project — moving away from exported classes toward factory functions to allow internal refactoring without breaking public API.
+
+### Resolution
+
+```javascript
+// Before (SDK 1.x):
+const { Resource } = require('@opentelemetry/resources');
+const resource = new Resource({ ... });
+
+// After (SDK 2.x):
+const { resourceFromAttributes } = require('@opentelemetry/resources');
+const resource = resourceFromAttributes({ ... });
+```
+
+### Lesson Learned
+
+- Always check migration/upgrade guides when using major versions of open-source libraries
+- The OTel JS 2.x upgrade guide is at: https://github.com/open-telemetry/opentelemetry-js/blob/main/doc/upgrade-to-2.x.md
+- Pin major versions in package.json to avoid surprise breakages (`"@opentelemetry/resources": "^2.0.0"` not `"*"`)
+
+---
+
+## Issue #5: Docker Health Check Fails — Alpine Linux IPv6 Resolution
+
+**Date:** June 22, 2026  
+**Environment:** Docker (local development with monitoring stack)  
+**Severity:** All monitoring services fail to start (dependency on app health)
+
+### Symptoms
+
+- App container starts successfully (logs show "Server started")
+- OpenTelemetry initializes correctly
+- Docker marks container as "unhealthy" after start_period
+- Monitoring services (Prometheus, Grafana) refuse to start with: `dependency failed to start: container church-idea-app-1 is unhealthy`
+- Confusing because the app IS running — you can `curl` it from the host
+
+### Error Message
+
+```
+dependency failed to start: container church-idea-app-1 is unhealthy
+```
+
+Running the health check manually inside the container:
+
+```
+$ docker compose exec app wget --no-verbose --tries=1 --spider http://localhost:3000/health
+Connecting to localhost:3000 ([::1]:3000)
+wget: can't connect to remote host: Connection refused
+```
+
+### Root Cause
+
+**Alpine Linux resolves `localhost` to `::1` (IPv6 loopback), but Node.js `app.listen(PORT, '0.0.0.0')` only binds to IPv4.**
+
+The chain of events:
+1. Node.js starts listening on `0.0.0.0:3000` (IPv4 only)
+2. Docker health check runs: `wget http://localhost:3000/health`
+3. Alpine's `/etc/hosts` has: `::1 localhost` (IPv6 first)
+4. `wget` resolves `localhost` → `[::1]` (IPv6)
+5. Tries to connect to `[::1]:3000` → nothing listening there → "Connection refused"
+6. Health check fails → Docker marks container unhealthy
+
+**Why this only appeared NOW:**
+- Before the monitoring stack, nothing depended on the health check status. The app was "unhealthy" in Docker's eyes the whole time, but no service cared.
+- Adding `depends_on: app: condition: service_healthy` in the monitoring compose exposed the latent bug.
+
+### Resolution
+
+Replace `localhost` with `127.0.0.1` in all health check commands:
+
+```yaml
+# docker-compose.yml
+healthcheck:
+  test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
+
+# Dockerfile
+HEALTHCHECK CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || exit 1
+```
+
+### Alternative Fixes (considered but not chosen)
+
+1. **Listen on `::` (dual-stack):** `app.listen(PORT)` without specifying host — binds to both IPv4 and IPv6. Risk: exposes on IPv6 interfaces which may have different firewall rules.
+2. **Modify Alpine's /etc/hosts:** Remove IPv6 localhost entry. Fragile and non-standard.
+3. **Use `curl` instead of `wget`:** Same issue — both resolve localhost the same way.
+
+### Lesson Learned
+
+- **Never use `localhost` in Docker health checks.** Always use `127.0.0.1`.
+- This bug is SILENT until something depends on the health check status.
+- When debugging "container is unhealthy but app is running," run the health check command manually inside the container: `docker compose exec <service> <health-check-command>`
+- Test health checks early — don't wait until you add dependent services to discover they've been failing all along.
+
+---
