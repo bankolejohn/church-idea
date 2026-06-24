@@ -317,3 +317,49 @@ That's the difference between "it works on my machine" and "I know it's working 
 Stack: Docker | Alpine Linux | Node.js | OpenTelemetry | Prometheus | Grafana | Loki | Jaeger
 
 #DevOps #Docker #Troubleshooting #Observability #Monitoring #AlpineLinux #SRE #ContainerHealth #Prometheus #Grafana
+
+
+---
+
+## Post 6: Your App Can Handle 1 User. Can It Handle 150?
+
+**I ran a stress test against my app. At 100 concurrent users, response times went from 50ms to 3 seconds. Here's what I found and how I fixed the deploy pipeline to catch this before users do.**
+
+Most apps work perfectly when one developer curls the API. The question is: what happens under real load?
+
+I set up k6 (Grafana's load testing tool) with four test types:
+- **Smoke:** 1 user, 30 seconds. Sanity check after every deploy.
+- **Stress:** Ramps to 150 users. Finds the breaking point.
+- **Spike:** Jumps from 10 to 200 users instantly. Tests resilience.
+- **Soak:** 30 users for 15 minutes. Detects memory leaks.
+
+The stress test revealed my breaking point: at 100 concurrent users, the database connection pool (20 connections) was exhausted. New requests queued up. Latency exploded. The app didn't crash — it just became unusably slow.
+
+**The fix wasn't just tuning the pool.** The fix was making sure bad deploys can't reach all users:
+
+I implemented **canary deployments** using AWS CodeDeploy:
+- New version launches alongside the old one
+- Only 10% of traffic goes to the new version
+- CloudWatch alarms monitor for 5 minutes: error rate, latency, unhealthy targets
+- If ANY alarm fires → instant rollback. 90% of users never noticed.
+- If clean → remaining traffic shifts. Old version terminates after a 10-minute buffer.
+
+The combination: load test in staging to find limits, canary deploy in production to limit blast radius. Even if something slips through staging, the canary catches it with minimal user impact.
+
+**For junior and aspiring DevOps/SRE engineers:**
+
+Three things that separate senior from junior:
+
+1. **Prove your assumptions.** "It should handle the load" is a guess. `k6 run stress.js` is evidence. Run it before every release.
+
+2. **Limit blast radius.** Rolling updates affect all users immediately. Canary deployments let you test in production with 10% exposure. If your monitoring is good, you catch issues in minutes, not hours.
+
+3. **Make rollback instant.** Keep the old version running during the canary window. If something goes wrong, traffic reroutes in seconds — no rebuild, no redeploy, no downtime.
+
+Production confidence isn't about preventing all bugs. It's about detecting them fast and limiting who they affect.
+
+---
+
+Stack: k6 | AWS CodeDeploy | ECS Fargate | CloudWatch Alarms | Terraform | GitHub Actions | Prometheus | Grafana
+
+#DevOps #SRE #LoadTesting #CanaryDeployment #AWS #CodeDeploy #k6 #Reliability #BlueGreen #PipelineEngineering
