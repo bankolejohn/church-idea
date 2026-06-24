@@ -1,0 +1,104 @@
+# ──────────────────────────────────────────────────────────────────────
+# Alertmanager Configuration
+#
+# WHAT ALERTMANAGER DOES:
+# Prometheus detects problems (alert rules fire). Alertmanager decides
+# WHO gets notified, HOW, and handles deduplication, grouping, and silencing.
+#
+# THE FLOW:
+# Prometheus (fires alert) → Alertmanager → Route → Receiver
+#                                              │
+#                                    ┌─────────┼─────────┐
+#                                    ▼         ▼         ▼
+#                                  Slack   PagerDuty   Email
+#
+# KEY FEATURES:
+# - Grouping: if 10 pods crash, you get 1 alert (not 10)
+# - Silencing: suppress alerts during maintenance
+# - Inhibition: if cluster is down, don't also alert about each service
+# - Routing: critical → PagerDuty, warning → Slack, info → email
+#
+# FOR LOCAL DEV:
+# We use a webhook receiver that just logs to stdout.
+# In production, you'd add Slack/PagerDuty/Opsgenie integrations.
+# ──────────────────────────────────────────────────────────────────────
+
+global:
+  resolve_timeout: 5m
+
+# ─── Route Tree ───────────────────────────────────────────────────
+# Routes determine where alerts go based on labels.
+route:
+  # Default receiver (catch-all)
+  receiver: 'log-alerts'
+
+  # Group alerts by alertname — so 5 "HighLatency" alerts become 1 notification
+  group_by: ['alertname', 'severity']
+
+  # Wait 30s before sending to group more alerts together
+  group_wait: 30s
+
+  # Wait 5m before sending another notification for the same group
+  group_interval: 5m
+
+  # Wait 4h before re-sending a notification that hasn't resolved
+  repeat_interval: 4h
+
+  # Child routes (more specific rules)
+  routes:
+    # Critical alerts → immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 10s
+      repeat_interval: 1h
+
+    # Warning alerts → less urgent
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 1m
+      repeat_interval: 4h
+
+# ─── Receivers ────────────────────────────────────────────────────
+# In production, replace these with real integrations:
+#
+# Slack example:
+#   - name: 'slack-critical'
+#     slack_configs:
+#       - api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
+#         channel: '#alerts-critical'
+#         title: '{{ .GroupLabels.alertname }}'
+#         text: '{{ .CommonAnnotations.summary }}'
+#
+# PagerDuty example:
+#   - name: 'pagerduty-critical'
+#     pagerduty_configs:
+#       - service_key: 'YOUR_PAGERDUTY_SERVICE_KEY'
+#         severity: '{{ .CommonLabels.severity }}'
+
+receivers:
+  - name: 'log-alerts'
+    webhook_configs:
+      - url: 'http://alertmanager:9093/api/v1/alerts'
+        send_resolved: true
+
+  - name: 'critical-alerts'
+    webhook_configs:
+      - url: 'http://alertmanager:9093/api/v1/alerts'
+        send_resolved: true
+
+  - name: 'warning-alerts'
+    webhook_configs:
+      - url: 'http://alertmanager:9093/api/v1/alerts'
+        send_resolved: true
+
+# ─── Inhibition Rules ─────────────────────────────────────────────
+# If a critical alert fires, suppress warnings for the same alertname.
+# Example: if ServiceDown fires, don't also send HighLatency (obviously it's slow — it's DOWN)
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname']

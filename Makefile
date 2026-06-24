@@ -1,4 +1,4 @@
-.PHONY: help dev up down build logs migrate seed test clean monitoring monitoring-down
+.PHONY: help dev up down build logs migrate seed test clean monitoring monitoring-down load-smoke load-stress load-spike load-soak
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -42,3 +42,15 @@ monitoring: ## Start app + full monitoring stack (Prometheus, Grafana, Loki, Jae
 
 monitoring-down: ## Stop monitoring stack
 	docker compose -f docker-compose.yml -f docker-compose.monitoring.yml down
+
+load-smoke: ## Run k6 smoke test (1 VU, 30s — basic sanity check)
+	k6 run load-testing/scripts/smoke.js
+
+load-stress: ## Run k6 stress test (ramps to 150 VUs — finds breaking points)
+	k6 run load-testing/scripts/stress.js
+
+load-spike: ## Run k6 spike test (sudden burst to 200 VUs — tests resilience)
+	k6 run load-testing/scripts/spike.js
+
+load-soak: ## Run k6 soak test (30 VUs for 15min — detects memory leaks)
+	k6 run load-testing/scripts/soak.js
