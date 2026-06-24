@@ -76,6 +76,32 @@ resource "aws_lb_target_group" "app" {
   }
 }
 
+# Green target group (for blue/green deployments via CodeDeploy)
+resource "aws_lb_target_group" "app_green" {
+  count       = var.enable_blue_green ? 1 : 0
+  name        = "${var.project_name}-${var.environment}-tg-green"
+  port        = var.container_port
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    path                = "/health"
+    matcher             = "200"
+  }
+
+  tags = {
+    Name        = "${var.project_name}-${var.environment}-tg-green"
+    Environment = var.environment
+    Purpose     = "blue-green-deployment"
+  }
+}
+
 # HTTP listener - forward traffic or redirect to HTTPS
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn

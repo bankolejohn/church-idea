@@ -72,6 +72,7 @@ module "alb" {
   vpc_id            = module.vpc.vpc_id
   public_subnet_ids = module.vpc.public_subnet_ids
   container_port    = 3000
+  enable_blue_green = true
 }
 
 # ─────────────────────────────────────────────
@@ -124,4 +125,28 @@ module "rds" {
   database_password     = var.db_password
   multi_az              = true
   backup_retention_days = 30
+}
+
+# ─────────────────────────────────────────────
+# CodeDeploy (Blue/Green Canary Deployments)
+# ─────────────────────────────────────────────
+module "codedeploy" {
+  source = "../../modules/codedeploy"
+
+  project_name = var.project_name
+  environment  = var.environment
+
+  ecs_cluster_name = module.ecs.cluster_name
+  ecs_service_name = module.ecs.service_name
+
+  alb_arn_suffix               = module.alb.alb_arn_suffix
+  target_group_blue_name       = module.alb.target_group_name
+  target_group_green_name      = module.alb.target_group_green_name
+  target_group_green_arn_suffix = module.alb.target_group_green_arn_suffix
+  listener_arns                = [module.alb.listener_arn]
+
+  # Canary strategy: 10% traffic for 5 minutes, then full shift
+  deployment_config        = "CodeDeployDefault.ECSCanary10Percent5Minutes"
+  termination_wait_minutes = 10
+  auto_proceed             = true
 }

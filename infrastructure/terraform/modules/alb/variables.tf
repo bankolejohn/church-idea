@@ -30,3 +30,9 @@ variable "enable_https" {
   type        = bool
   default     = false
 }
+
+variable "enable_blue_green" {
+  description = "Create a second (green) target group for CodeDeploy blue/green deployments"
+  type        = bool
+  default     = false
+}
