@@ -608,3 +608,447 @@ With observability in place, you can now:
 5. **Add Tempo** (Grafana's tracing backend) to replace Jaeger for better Grafana integration
 
 This is the foundation of professional SRE work. Everything from here is refinement.
+
+
+---
+
+## Hands-On: Using the Monitoring Stack (Step by Step)
+
+This section is for anyone who has never used Prometheus, Grafana, Loki, or Jaeger before. Follow along from the start.
+
+---
+
+### Step 1: Start Everything
+
+```bash
+# Make sure Docker is running, then:
+make monitoring
+```
+
+This starts: your app + PostgreSQL + Prometheus + Grafana + Loki + Promtail + Jaeger + Alertmanager.
+
+Wait about 30 seconds for all services to be healthy. You'll see logs scrolling in the terminal.
+
+**Verify everything is up:**
+
+| Service | URL | What You Should See |
+|---------|-----|---------------------|
+| App | http://localhost:3000 | Church CMS login page |
+| App metrics | http://localhost:3000/metrics | Wall of text (Prometheus format) |
+| Grafana | http://localhost:3001 | Login page (admin/admin) |
+| Prometheus | http://localhost:9090 | Prometheus query UI |
+| Jaeger | http://localhost:16686 | Jaeger search page |
+| Alertmanager | http://localhost:9093 | Alertmanager status page |
+
+If any of these don't load, check `docker compose ps` to see which container is unhealthy.
+
+---
+
+### Step 2: Generate Traffic (So the Tools Have Data)
+
+Open a NEW terminal window and run these commands:
+
+```bash
+# Seed the database (creates admin user)
+make seed
+
+# Login and get a token
+TOKEN=$(curl -s http://localhost:3000/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+# Verify token worked
+echo "Token: ${TOKEN:0:20}..."
+
+# Hit all the major endpoints
+curl -s http://localhost:3000/health
+curl -s http://localhost:3000/ready
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/branches
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/members
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/stats
+
+# Generate some failed logins (shows up in dashboards)
+curl -s http://localhost:3000/api/login -H "Content-Type: application/json" -d '{"username":"hacker","password":"wrong"}'
+curl -s http://localhost:3000/api/login -H "Content-Type: application/json" -d '{"username":"test","password":"bad"}'
+```
+
+Now you have data flowing through all three pillars (metrics, logs, traces).
+
+---
+
+### Step 3: Prometheus — Your First Queries
+
+Open http://localhost:9090
+
+**The UI:**
+- Top bar: query input field
+- "Execute" button: runs the query
+- Two tabs below: "Table" (raw values) and "Graph" (time-series chart)
+
+**Try these queries (copy-paste into the query box):**
+
+```promql
+# 1. Is the app up? (1 = yes, 0 = no)
+up{job="church-cms"}
+
+# 2. Total HTTP requests made so far
+churchcms_http_requests_total
+
+# 3. Request rate per second (last 5 minutes)
+rate(churchcms_http_requests_total[5m])
+
+# 4. 95th percentile response time
+histogram_quantile(0.95, rate(churchcms_http_request_duration_seconds_bucket[5m]))
+
+# 5. Database pool connections (active vs idle)
+churchcms_db_pool_active_connections
+churchcms_db_pool_idle_connections
+
+# 6. Login attempts by status
+churchcms_login_attempts_total
+
+# 7. Memory usage in MB
+churchcms_process_resident_memory_bytes / 1024 / 1024
+
+# 8. Node.js event loop lag (should be < 0.05s)
+churchcms_nodejs_eventloop_lag_seconds
+```
+
+**How to read the Graph tab:**
+- X-axis: time
+- Y-axis: metric value
+- Each line is a unique combination of labels
+- Hover to see exact values at any point in time
+
+**Check your targets:** Go to Status → Targets in the top menu. You should see:
+- `church-cms` (UP) — your app on port 3000
+- `church-cms-otel` (UP) — OpenTelemetry exporter on port 9464
+- `prometheus` (UP) — Prometheus monitoring itself
+
+If any show "DOWN", the scrape is failing (check the Error column for why).
+
+---
+
+### Step 4: Grafana — Navigating the Dashboards
+
+Open http://localhost:3001 and login: **admin / admin** (skip password change).
+
+**Finding the dashboards:**
+1. Left sidebar → click the **Dashboards** icon (four squares)
+2. You'll see a folder called "Church CMS"
+3. Click it → three dashboards appear
+
+**Dashboard: Application Overview**
+
+This is your "at a glance" view. What to look for:
+- **Request Rate panel:** Should show a line going up as you make requests. If flat = no traffic.
+- **Response Time panel:** Three lines (p50, p95, p99). They should all be < 1 second. If p99 diverges significantly from p50, some requests are slow.
+- **Error Rate panel:** Should be near 0%. If it spikes, something is broken.
+- **Uptime panel:** Should say "UP" (green). If it says "DOWN" (red), Prometheus can't reach the app.
+
+**Dashboard: Infrastructure**
+
+This shows the NODE.JS RUNTIME health:
+- **Memory panel:** Watch if the line goes UP over time without coming back down. That's a memory leak.
+- **DB Connection Pool panel:** "Active" should be low (1-3). "Waiting" should be 0. If waiting > 0, you're running out of connections.
+- **Event Loop Lag panel:** Should be near 0. If it spikes > 100ms, something is blocking the event loop (CPU-heavy work on the main thread).
+
+**Dashboard: Business KPIs**
+
+This is for non-engineers (product managers, team leads):
+- **Login Activity:** Shows successful vs failed logins over time. A spike in failures could mean a brute force attack.
+- **Members Created:** Shows church growth over time.
+
+**Grafana Tips:**
+- **Time range:** Top-right corner has a time picker. Set it to "Last 15 minutes" for recent data.
+- **Auto-refresh:** Click the refresh icon → set to 10s for live updates.
+- **Hover:** Hover over any graph point to see exact values and timestamp.
+- **Zoom:** Click and drag on a graph to zoom into a time range.
+
+---
+
+### Step 5: Jaeger — Viewing Distributed Traces
+
+Open http://localhost:16686
+
+**The UI:**
+- Left panel: Service dropdown, operation dropdown, time range, search button
+- Main area: List of traces with their durations
+
+**Finding your first trace:**
+1. Service dropdown → select `church-cms`
+2. Click "Find Traces"
+3. You'll see a list of recent traces (each is one HTTP request)
+4. Click on any one — preferably a `POST /api/login` or `GET /api/members`
+
+**Reading a trace:**
+```
+Example: GET /api/members (total: 25ms)
+├── express.middleware (0.3ms)
+├── express.middleware (0.1ms)
+├── GET /api/members (24ms)
+│   └── pg.query: SELECT m.*, b.name... (18ms)  ← This is where time was spent
+```
+
+**What each span tells you:**
+- **Duration bar:** The colored bar shows how long that operation took relative to the total request
+- **Tags:** Click a span to see metadata (HTTP status, SQL query text, DB name)
+- **Errors:** Red spans indicate failures (check the tags for error messages)
+
+**Real debugging scenario:**
+If a request took 3 seconds and the trace shows:
+- Express middleware: 1ms
+- Route handler: 5ms
+- pg.query: 2994ms ← THE PROBLEM
+
+You now know the database query is the bottleneck. Check the SQL in the span tags → maybe it needs an index.
+
+**Jaeger Tips:**
+- **Compare traces:** Find a fast trace and a slow trace for the same endpoint. Compare their spans to see what's different.
+- **Filter by duration:** Use "Min Duration" to find only slow traces (e.g., > 1s)
+- **Deep linking:** The trace URL is shareable. Paste it in a Slack thread when discussing an issue.
+
+---
+
+### Step 6: Loki — Querying Logs
+
+Loki doesn't have its own UI. You access it through Grafana.
+
+1. In Grafana, left sidebar → click **Explore** (compass icon)
+2. Top-left dropdown → switch from "Prometheus" to **"Loki"**
+3. In the query box, start typing
+
+**Your first log query:**
+```logql
+{service="church-cms"}
+```
+
+Click "Run query" — you'll see all your app's logs streaming in.
+
+**Filtering logs (most useful queries):**
+
+```logql
+# Only errors
+{service="church-cms"} | json | level="error"
+
+# Only login-related logs
+{service="church-cms"} | json | message=~".*login.*"
+
+# Logs for a specific user
+{service="church-cms"} | json | username="admin"
+
+# Logs with a specific trace ID (find all logs for one request)
+{service="church-cms"} | json | trace_id="<paste-trace-id-here>"
+
+# Count errors per minute (shows a graph instead of log lines)
+rate({service="church-cms"} | json | level="error" [1m])
+
+# Logs with response time info
+{service="church-cms"} | json | line_format "{{.message}} [{{.level}}]"
+```
+
+**Loki UI Tips:**
+- **Live tail:** Click the "Live" button (top-right) to stream logs in real time as they happen.
+- **Time range matters:** If you see "no data", expand the time range (top-right picker).
+- **Log line expansion:** Click any log line to expand it and see all JSON fields parsed.
+- **Log-to-Trace:** If you see a `trace_id` field in a log entry, copy it and search for it in Jaeger to see the full request trace.
+
+---
+
+### Step 7: Alertmanager — Understanding Alert State
+
+Open http://localhost:9093
+
+**The UI:**
+- **Alerts tab:** Shows currently firing alerts (should be empty if everything is healthy)
+- **Silences tab:** Shows active silences (scheduled maintenance suppression)
+- **Status tab:** Shows Alertmanager configuration and health
+
+**To see alert RULES (not Alertmanager):** Go to Prometheus → http://localhost:9090/alerts
+
+Here you'll see ALL your alert rules with their states:
+- **Inactive (green):** Condition is NOT met. Everything is fine.
+- **Pending (yellow):** Condition is met but hasn't been true long enough (waiting for `for` duration).
+- **Firing (red):** Condition has been true for the required duration. Alert is active.
+
+**Trigger an alert manually (to see how it works):**
+
+```bash
+# Stop the app container — this will trigger ServiceDown alert
+docker compose stop app
+
+# Wait 60 seconds (the alert has `for: 1m`)
+# Then check: http://localhost:9090/alerts
+# ServiceDown should change from Inactive → Pending → Firing
+
+# Check Alertmanager: http://localhost:9093/#/alerts
+# You should see the fired alert with its annotations
+
+# Restart the app
+docker compose start app
+
+# Wait 60 seconds — alert should resolve
+```
+
+**Alertmanager concepts to observe:**
+- When an alert fires, Alertmanager **groups** it (see the grouping)
+- If you fire multiple alerts, they get **batched** (one notification, not spam)
+- The **repeat_interval** prevents re-sending the same alert every 15 seconds
+
+---
+
+### Step 8: Load Testing + Watching Dashboards (The Real Demo)
+
+This is where it all comes together. You stress the app and WATCH the monitoring stack react in real time.
+
+**Setup:** Open these side by side (multiple browser tabs):
+1. Grafana → Application Overview dashboard (set auto-refresh to 10s)
+2. Grafana → Infrastructure dashboard
+3. Terminal for k6
+
+**Important:** Before running load tests, increase the rate limit to avoid false failures:
+
+Add this to your `.env` file:
+```
+RATE_LIMIT_LOGIN_MAX=10000
+```
+
+Then restart the app:
+```bash
+docker compose restart app
+sleep 10
+```
+
+**Run the smoke test (basic sanity):**
+```bash
+make load-smoke
+```
+
+Watch Grafana: you should see a small uptick in request rate and a few data points in latency.
+
+**Run the stress test (find limits):**
+```bash
+make load-stress
+```
+
+**What to watch in real time:**
+- Application Overview: Request rate should climb as VUs increase (50 → 100 → 150)
+- Response Time: p95/p99 should stay stable initially, then diverge from p50 at higher load
+- Infrastructure: CPU climbs, DB pool active connections increase
+- If latency spikes: check DB pool "Waiting" — if > 0, you've hit the pool limit
+
+**Run the spike test (sudden burst):**
+```bash
+make load-spike
+```
+
+**What to watch:**
+- Request rate jumps suddenly (10 → 200 VUs in 10 seconds)
+- Error rate may spike briefly (rate limiting kicks in — expected)
+- After spike passes (drops back to 10 VUs), does latency return to baseline? If yes = healthy recovery. If no = resource leak.
+
+**After the tests, check:**
+- Jaeger: You'll have hundreds of traces. Sort by duration to find the slowest ones.
+- Loki: `{service="church-cms"} | json | level="error"` — any errors during the test?
+- Prometheus alerts: http://localhost:9090/alerts — did any alerts fire?
+
+---
+
+### Step 9: The Complete Debugging Workflow (Putting It All Together)
+
+Pretend you just got paged: "Users report the app is slow."
+
+**Minute 0: Triage (Grafana Application Overview)**
+- Open the dashboard. Check error rate and p95 latency.
+- See: p95 spiked from 100ms to 3s at 2:15pm. Error rate is 8%.
+- Conclusion: something broke at 2:15pm.
+
+**Minute 1: Identify the endpoint (Grafana Application Overview → "Requests by Route")**
+- See: `/api/members` has most of the latency. Other routes are fine.
+- Conclusion: the problem is specific to the members endpoint.
+
+**Minute 2: Check infrastructure (Grafana Infrastructure dashboard)**
+- DB pool: "Waiting" = 5 clients. Pool is exhausted.
+- Memory: flat (no leak). CPU: 40% (not compute-bound).
+- Conclusion: all DB connections are busy. New queries are queuing.
+
+**Minute 3: Find the logs (Grafana Explore → Loki)**
+```logql
+{service="church-cms"} | json | level="error"
+```
+- See: "Connection timeout waiting for available connection" at 2:15pm.
+- Grab the `trace_id` from the error log.
+
+**Minute 4: Trace the request (Jaeger)**
+- Search for the trace_id in Jaeger.
+- See: `pg.query: SELECT m.*, b.name FROM members m JOIN branches b...` took 12 seconds.
+- The SQL is doing a full table scan because `branch_id` has no index.
+
+**Minute 5: Root cause identified.**
+- A new query was deployed without an index.
+- Under load, the slow query holds connections → pool exhausts → everything queues.
+- Fix: `CREATE INDEX idx_members_branch_id ON members(branch_id);`
+
+**Total time from page to root cause: 5 minutes.**
+Without observability, this would be hours of guessing, adding console.logs, redeploying, and hoping.
+
+---
+
+### Quick Reference: What Tool Answers What Question
+
+| Question | Tool | Where to Look |
+|----------|------|---------------|
+| Is the app alive? | Prometheus | `up{job="church-cms"}` or Grafana Uptime panel |
+| How fast are responses? | Grafana | Application Overview → Response Time panel |
+| What percentage of requests fail? | Grafana | Application Overview → Error Rate panel |
+| Why is this ONE request slow? | Jaeger | Find trace → look at span durations |
+| What errors happened at 2pm? | Loki (via Grafana) | `{service="..."} \| json \| level="error"` |
+| Is the DB overloaded? | Grafana | Infrastructure → DB Connection Pool |
+| Is there a memory leak? | Grafana | Infrastructure → Memory (RSS) trending up? |
+| Are users logging in? | Grafana | Business KPIs → Login Activity |
+| Should I be worried right now? | Prometheus Alerts | http://localhost:9090/alerts |
+| Who got notified? | Alertmanager | http://localhost:9093/#/alerts |
+| What's the full story of a request? | Jaeger | Service → Find Traces → Click one |
+| How does this request's log connect to its trace? | Loki + Jaeger | Find `trace_id` in log → search in Jaeger |
+
+---
+
+### Troubleshooting the Monitoring Stack
+
+**"No data" in Grafana dashboards:**
+1. Check time range (top-right) — set to "Last 15 minutes"
+2. Check Prometheus targets: http://localhost:9090/targets — are they UP?
+3. Generate some traffic (curl the app) — dashboards need data to show
+
+**"Cannot connect to datasource" in Grafana:**
+- The datasources are pre-provisioned. If they fail, restart Grafana: `docker compose restart grafana`
+
+**Prometheus shows target as DOWN:**
+- The app container might still be starting. Wait 30 seconds.
+- Check if the app is healthy: `curl http://localhost:3000/health`
+
+**Jaeger shows no traces:**
+- Ensure `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` is in docker-compose.yml
+- OTel excludes `/health` and `/ready` from tracing (by design). Hit `/api/branches` instead.
+
+**Loki shows no logs:**
+- Promtail needs access to the Docker socket. Check: `docker compose logs promtail`
+- Ensure the app is actually generating logs (make some requests)
+
+**k6 load test fails with rate limiting:**
+- Add `RATE_LIMIT_LOGIN_MAX=10000` to `.env` and restart the app
+- Or restart the app to reset in-memory rate limit counters: `docker compose restart app`
+
+---
+
+## What's Next
+
+With observability in place, you can now:
+1. **Set up real SLOs** and track error budgets in Grafana
+2. **Route alerts** to Slack/PagerDuty (update alertmanager.yml with webhook URLs)
+3. **Run k6 load tests** regularly and watch dashboards under stress
+4. **Move to Kubernetes** where Prometheus/Grafana/Loki deploy as Helm charts
+5. **Add Tempo** (Grafana's tracing backend) to replace Jaeger for tighter Grafana integration
+6. **Add chaos engineering** — kill pods/containers and watch observability catch it
+
+This is the foundation of professional SRE work. Everything from here is refinement.
