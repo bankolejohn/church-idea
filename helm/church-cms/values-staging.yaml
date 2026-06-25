@@ -1,0 +1,16 @@
+# Staging environment overrides
+replicaCount: 2
+
+image:
+  tag: "staging"
+
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 5
+
+ingress:
+  host: staging.churchidea.johndesiventures.website
+
+config:
+  NODE_ENV: staging
+  LOG_LEVEL: info

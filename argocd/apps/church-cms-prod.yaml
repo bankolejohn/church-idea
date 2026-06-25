@@ -1,0 +1,59 @@
+###############################################
+# ArgoCD Application — Production
+#
+# KEY DIFFERENCE FROM DEV/STAGING:
+# - NO automated sync (manual approval required)
+# - pinned to a specific Git tag (not branch HEAD)
+# - selfHeal disabled (don't revert emergency manual changes)
+#
+# DEPLOY PROCESS:
+# 1. Release-please creates a tag (e.g., v2.1.0)
+# 2. Update targetRevision below to the new tag
+# 3. Commit this change to Git
+# 4. ArgoCD detects "OutOfSync" state
+# 5. Engineer clicks "Sync" in ArgoCD UI (manual approval)
+# 6. ArgoCD applies the changes to production
+#
+# WHY MANUAL FOR PROD:
+# Auto-sync in prod means ANY Git change immediately goes live.
+# One bad merge = instant production incident with no gate.
+# Manual sync is the "approve" button.
+###############################################
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: church-cms-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: church-cms
+    environment: prod
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/bankolejohn/church-idea.git
+    targetRevision: v2.0.0  # PINNED to release tag
+    path: helm/church-cms
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-prod.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: church-cms-prod
+
+  # NO automated sync for production
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m0s

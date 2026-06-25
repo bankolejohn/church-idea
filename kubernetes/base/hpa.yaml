@@ -1,0 +1,61 @@
+###############################################
+# Church CMS - Horizontal Pod Autoscaler
+#
+# WHAT HPA DOES:
+# Automatically adjusts the number of pod replicas based on
+# CPU/memory usage or custom metrics.
+#
+# HOW IT WORKS:
+# 1. Metrics server reports current CPU/memory per pod
+# 2. HPA compares actual vs target (e.g., 80% CPU target)
+# 3. If actual > target → scale UP (add pods)
+# 4. If actual < target → scale DOWN (remove pods)
+# 5. Cooldown prevents thrashing (scaleDown stabilization)
+#
+# EXAMPLE:
+# 2 pods at 90% CPU (target 70%) → HPA calculates: need 3 pods
+# 3 pods at 40% CPU → HPA waits 5 minutes, then scales to 2
+###############################################
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: church-cms
+  labels:
+    app: church-cms
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: church-cms
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    # Scale based on CPU
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Scale based on Memory
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    # Scale UP aggressively (respond to load spikes quickly)
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100  # Can double pod count per scale-up
+          periodSeconds: 60
+    # Scale DOWN conservatively (avoid premature scale-down)
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait 5 minutes before scaling down
+      policies:
+        - type: Pods
+          value: 1  # Remove 1 pod at a time
+          periodSeconds: 60

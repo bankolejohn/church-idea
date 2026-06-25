@@ -1,0 +1,31 @@
+###############################################
+# Church CMS - Service
+#
+# WHAT A SERVICE DOES:
+# Pods are ephemeral — they get new IPs when they restart.
+# A Service provides a STABLE network identity (DNS name + IP)
+# that routes traffic to the healthy pods behind it.
+#
+# TYPE: ClusterIP (internal only — exposed externally via Ingress)
+###############################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: church-cms
+  labels:
+    app: church-cms
+    app.kubernetes.io/name: church-cms
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app: church-cms
+  ports:
+    - name: http
+      port: 80
+      targetPort: http  # References the named port in the Deployment
+      protocol: TCP
+    - name: metrics
+      port: 9464
+      targetPort: metrics
+      protocol: TCP

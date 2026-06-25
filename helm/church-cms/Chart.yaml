@@ -1,0 +1,40 @@
+# ──────────────────────────────────────────────────────────────────────
+# Helm Chart Metadata
+#
+# WHAT HELM IS:
+# Helm is the "package manager for Kubernetes." Like npm for Node.js,
+# Helm packages Kubernetes manifests into reusable, versioned "charts."
+#
+# WHY HELM (when we already have Kustomize):
+# - Kustomize: patching existing manifests (great for simple overrides)
+# - Helm: full templating, dependencies, hooks, versioned releases
+#
+# In practice, many teams use BOTH:
+# - Helm for packaging and releasing (versioned artifacts)
+# - Kustomize for last-mile environment patches (ArgoCD overlays)
+#
+# CHART VERSIONING:
+# - Chart version (this file): version of the CHART itself (packaging)
+# - App version (this file): version of the APPLICATION inside
+# These are independent — you can update chart structure without changing app
+# ──────────────────────────────────────────────────────────────────────
+apiVersion: v2
+name: church-cms
+description: Church Management System — multi-branch membership tracking with role-based access
+type: application
+version: 1.0.0
+appVersion: "2.0.0"
+
+keywords:
+  - nodejs
+  - express
+  - postgresql
+  - church-management
+
+home: https://github.com/bankolejohn/church-idea
+sources:
+  - https://github.com/bankolejohn/church-idea
+
+maintainers:
+  - name: bankolejohn
+    url: https://github.com/bankolejohn

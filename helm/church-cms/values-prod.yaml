@@ -1,0 +1,29 @@
+# Production environment overrides
+replicaCount: 3
+
+image:
+  tag: "2.0.0"  # Always pinned version in prod
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 10
+
+pdb:
+  minAvailable: 2
+
+ingress:
+  host: churchidea.johndesiventures.website
+
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DB_POOL_MAX: "30"

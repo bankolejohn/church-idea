@@ -1,0 +1,28 @@
+###############################################
+# Church CMS - ConfigMap
+#
+# WHAT CONFIGMAP IS:
+# Non-sensitive configuration that varies by environment.
+# Mounted as environment variables in the pod.
+#
+# RULE: Never put secrets here. Use Secrets for credentials.
+# ConfigMaps are stored in plain text in etcd.
+###############################################
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: church-cms-config
+  labels:
+    app: church-cms
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  DB_SSL: "true"
+  DB_POOL_MAX: "20"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  ENABLE_HTTPS: "true"
+  OTEL_ENABLED: "true"
+  OTEL_SERVICE_NAME: "church-cms"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+  PROMETHEUS_METRICS_PORT: "9464"

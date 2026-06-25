@@ -1,0 +1,63 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: church-cms-dev
+
+namespace: church-cms-dev
+
+resources:
+  - ../../base
+
+# Patches for dev environment
+patches:
+  # Reduce replicas (cost saving)
+  - target:
+      kind: Deployment
+      name: church-cms
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  # Reduce resource requests
+  - target:
+      kind: Deployment
+      name: church-cms
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 50m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 64Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 250m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 256Mi
+  # Adjust HPA for dev
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: church-cms
+    patch: |
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+
+# Override ConfigMap values for dev
+configMapGenerator:
+  - name: church-cms-config
+    behavior: merge
+    literals:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+      - ENABLE_HTTPS=false
+
+# Set image tag for dev
+images:
+  - name: ghcr.io/bankolejohn/church-idea
+    newTag: latest

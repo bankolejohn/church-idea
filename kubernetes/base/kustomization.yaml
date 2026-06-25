@@ -1,0 +1,38 @@
+###############################################
+# Kustomize Base
+#
+# WHAT KUSTOMIZE IS:
+# A template-free way to customize Kubernetes manifests.
+# Instead of templating (Helm's {{ .Values.x }}), Kustomize
+# uses overlays that PATCH the base manifests.
+#
+# STRUCTURE:
+#   base/         → Common manifests (this file)
+#   overlays/
+#     dev/        → Patches for dev (1 replica, fewer resources)
+#     staging/    → Patches for staging (2 replicas)
+#     prod/       → Patches for prod (3+ replicas, strict policies)
+#
+# USAGE:
+#   kubectl apply -k kubernetes/overlays/dev
+#   kubectl apply -k kubernetes/overlays/prod
+###############################################
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: church-cms-base
+
+# Common labels added to ALL resources
+commonLabels:
+  app.kubernetes.io/part-of: church-cms
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - configmap.yaml
+  - serviceaccount.yaml
+  - networkpolicy.yaml
+  - pdb.yaml

@@ -1,0 +1,69 @@
+###############################################
+# ArgoCD Application — Dev Environment
+#
+# WHAT ARGOCD DOES:
+# ArgoCD is a GitOps controller. It watches a Git repo and
+# CONTINUOUSLY ensures your cluster matches what's in Git.
+#
+# THE GITOPS LOOP:
+# 1. Developer merges PR → Git repo changes
+# 2. ArgoCD detects the change (polls every 3 minutes or webhook)
+# 3. ArgoCD compares Git state vs cluster state
+# 4. If different → auto-syncs (applies the changes to K8s)
+# 5. Shows sync status in the ArgoCD UI
+#
+# WHY GITOPS:
+# - Every change is in Git (auditable, reversible, reviewable)
+# - No manual kubectl apply (eliminates "it works on my machine")
+# - Drift detection (if someone manually changes the cluster, ArgoCD reverts it)
+# - Declarative (you describe WHAT you want, not HOW to get there)
+###############################################
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: church-cms-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: church-cms
+    environment: dev
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  # WHERE to get the manifests
+  source:
+    repoURL: https://github.com/bankolejohn/church-idea.git
+    targetRevision: develop
+    path: helm/church-cms
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-dev.yaml
+
+  # WHERE to deploy them
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: church-cms-dev
+
+  # SYNC POLICY
+  syncPolicy:
+    # Auto-sync: automatically apply changes when Git changes
+    automated:
+      prune: true      # Delete resources removed from Git
+      selfHeal: true   # Revert manual changes (drift correction)
+      allowEmpty: false
+
+    # Auto-create namespace if it doesn't exist
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+
+    # Retry on sync failure
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m0s

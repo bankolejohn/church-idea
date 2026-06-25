@@ -1,0 +1,136 @@
+# ──────────────────────────────────────────────────────────────────────
+# Default Values for Church CMS Helm Chart
+#
+# HOW VALUES WORK:
+# These are the DEFAULTS. Each environment overrides what it needs:
+#   helm install church-cms ./helm/church-cms -f values-dev.yaml
+#   helm install church-cms ./helm/church-cms -f values-prod.yaml
+#
+# Anything not overridden uses these defaults.
+# ──────────────────────────────────────────────────────────────────────
+
+# ─── Image ────────────────────────────────────────────────────────
+image:
+  repository: ghcr.io/bankolejohn/church-idea
+  tag: "latest"
+  pullPolicy: Always
+
+# ─── Replicas ─────────────────────────────────────────────────────
+replicaCount: 2
+
+# ─── Service ──────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+  metricsPort: 9464
+
+# ─── Ingress ──────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+  host: church-cms.example.com
+  tls: []
+  # certificateArn: ""  # Set in environment-specific values
+
+# ─── Resources ────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ─── Autoscaling (HPA) ───────────────────────────────────────────
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilization: 70
+  targetMemoryUtilization: 80
+
+# ─── Pod Disruption Budget ────────────────────────────────────────
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# ─── Health Probes ────────────────────────────────────────────────
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+  startup:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 10
+
+# ─── Environment Configuration ───────────────────────────────────
+config:
+  NODE_ENV: production
+  PORT: "3000"
+  DB_SSL: "true"
+  DB_POOL_MAX: "20"
+  LOG_LEVEL: info
+  LOG_FORMAT: json
+  ENABLE_HTTPS: "true"
+  OTEL_ENABLED: "true"
+  OTEL_SERVICE_NAME: church-cms
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+  PROMETHEUS_METRICS_PORT: "9464"
+
+# ─── Secrets (references — actual values via external-secrets or sealed-secrets)
+secrets:
+  # These are NOT the actual values — just the keys expected
+  DATABASE_URL: ""
+  JWT_SECRET: ""
+
+# ─── Service Account ─────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: church-cms
+  annotations: {}
+  # For IRSA:
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/church-cms-pod-role
+
+# ─── Network Policy ──────────────────────────────────────────────
+networkPolicy:
+  enabled: true
+
+# ─── Security Context ────────────────────────────────────────────
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# ─── Node Affinity / Tolerations ─────────────────────────────────
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ─── Pod Anti-Affinity ────────────────────────────────────────────
+podAntiAffinity:
+  enabled: true
+  type: preferred  # "preferred" or "required"

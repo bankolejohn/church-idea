@@ -1,0 +1,106 @@
+###############################################
+# Karpenter NodePool
+#
+# WHAT THIS IS:
+# Defines the RULES for how Karpenter provisions nodes.
+# - What instance types are allowed?
+# - What AZs?
+# - Spot or On-Demand?
+# - When to consolidate?
+#
+# INSTANCE SELECTION STRATEGY:
+# We allow a WIDE range of instance types. Karpenter picks
+# the cheapest one that fits the pending pod's requirements.
+# More variety = more Spot availability = lower costs.
+###############################################
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    metadata:
+      labels:
+        managed-by: karpenter
+    spec:
+      # WHAT kinds of nodes to provision
+      requirements:
+        # Instance categories (general purpose + compute optimized)
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["c", "m", "t"]  # Compute, General, Burstable
+
+        # Instance sizes (small to xlarge — avoid micro/nano for K8s overhead)
+        - key: karpenter.k8s.aws/instance-size
+          operator: In
+          values: ["medium", "large", "xlarge"]
+
+        # Architecture
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+
+        # Capacity type: prefer Spot (70% cheaper) with On-Demand fallback
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot", "on-demand"]
+
+      # Node reference to the instance profile
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+
+  # CONSOLIDATION:
+  # When nodes are underutilized, Karpenter:
+  # 1. Identifies nodes where pods can be moved elsewhere
+  # 2. Cordons the node (no new pods)
+  # 3. Drains pods (respecting PDBs)
+  # 4. Terminates the node
+  # This saves money during low-traffic periods.
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 60s
+
+  # Hard limits on total cluster resources Karpenter can provision
+  limits:
+    cpu: "20"        # Max 20 vCPUs total
+    memory: "40Gi"   # Max 40GB total
+
+---
+###############################################
+# EC2NodeClass — HOW to configure the nodes
+###############################################
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  # AMI family (Amazon Linux 2023 is the latest EKS-optimized AMI)
+  amiFamily: AL2023
+
+  # Subnets where nodes can be launched (discovered by tag)
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "church-cms-staging"  # Set per environment
+
+  # Security groups for the nodes
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "church-cms-staging"  # Set per environment
+
+  # IAM instance profile for the nodes
+  instanceProfile: "church-cms-staging-karpenter-node"  # Set per environment
+
+  # Block device (root volume)
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 30Gi
+        volumeType: gp3
+        encrypted: true
+        deleteOnTermination: true
+
+  tags:
+    Environment: staging
+    ManagedBy: karpenter

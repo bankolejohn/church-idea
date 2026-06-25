@@ -450,3 +450,44 @@ Start with Trivy IaC scanning. One `trivy config infrastructure/` command will s
 Stack: Trivy | Cosign/Sigstore | Syft | SBOM (SPDX + CycloneDX) | GitHub Actions | OIDC | Terraform
 
 #DevOps #Security #SupplyChain #Trivy #Cosign #SBOM #Terraform #ContainerSecurity #SRE #CloudSecurity
+
+
+---
+
+## Post 9: I Run the Same App on ECS AND Kubernetes. Here's What I Learned.
+
+**Most engineers learn one or the other. Having both in the same repo taught me more than either alone.**
+
+I've been building a church management app as a DevOps learning project. It started on ECS Fargate — simple, cheap, managed. This week I added the full Kubernetes path: EKS, Helm charts, ArgoCD GitOps, and Karpenter for node autoscaling.
+
+**The Kubernetes stack:**
+- EKS cluster (Terraform module with IRSA, managed node groups, core add-ons)
+- Kustomize manifests (base + overlays for dev/staging/prod)
+- Helm chart (templated, versioned, deployable with one command)
+- ArgoCD (GitOps — Git is the single source of truth for cluster state)
+- Karpenter (provisions the cheapest node in 60 seconds based on pending pod requirements)
+- Network policies (zero-trust: deny all, allow only what's needed)
+
+**What ECS taught me that K8s people miss:**
+
+ECS is operationally simpler. No control plane to worry about. No node groups. No kubelet issues. For a single service with predictable load, it's the right choice. Not everything needs Kubernetes.
+
+**What K8s taught me that ECS people miss:**
+
+The ecosystem is unmatched. ArgoCD gives you GitOps with drift detection. Karpenter gives you intelligent scaling that ECS can't match. Network policies give you zero-trust that Fargate doesn't support natively. Helm gives you versioned, rollbackable releases. The tooling compounds.
+
+**The real lesson:**
+
+Senior engineers don't pick tools based on hype. They pick based on constraints:
+- Team size (3 people? ECS. 30 people? Kubernetes.)
+- Service count (1 service? ECS. 15 services? Kubernetes.)
+- Multi-cloud needs (AWS only? ECS. Need portability? Kubernetes.)
+- Budget (No devops hire? ECS. Dedicated platform team? Kubernetes.)
+
+Having both in my portfolio means I can have that conversation honestly. I'm not selling a tool — I'm solving the problem with whatever fits.
+
+---
+
+Stack: EKS | Terraform | Helm | ArgoCD | Karpenter | Kustomize | Network Policies | IRSA
+
+#DevOps #Kubernetes #AWS #EKS #Helm #ArgoCD #GitOps #Karpenter #PlatformEngineering #SRE

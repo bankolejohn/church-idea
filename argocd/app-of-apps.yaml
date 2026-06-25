@@ -1,0 +1,41 @@
+###############################################
+# ArgoCD App of Apps Pattern
+#
+# WHAT THIS IS:
+# Instead of manually creating each ArgoCD Application,
+# you create ONE "parent" app that manages all the others.
+#
+# This parent app watches the argocd/apps/ directory.
+# When you add a new YAML file there, ArgoCD automatically
+# discovers and deploys it.
+#
+# BENEFITS:
+# - Single entry point (apply this one file, everything else follows)
+# - Git-driven application discovery
+# - Consistent configuration across all environments
+###############################################
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: church-cms-apps
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: church-cms
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/bankolejohn/church-idea.git
+    targetRevision: main
+    path: argocd/apps
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

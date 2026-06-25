@@ -1,0 +1,89 @@
+###############################################
+# Church CMS - Network Policy
+#
+# WHAT NETWORK POLICIES DO:
+# By default, ALL pods can talk to ALL other pods in K8s.
+# Network policies implement ZERO-TRUST networking:
+# "Deny everything, allow only what's explicitly needed."
+#
+# THIS POLICY:
+# - Allows ingress from the ALB (Ingress controller)
+# - Allows ingress from Prometheus (metrics scraping)
+# - Allows egress to PostgreSQL (port 5432)
+# - Allows egress to DNS (port 53 — required for service discovery)
+# - Allows egress to OTEL collector (port 4318)
+# - DENIES everything else
+#
+# WHY THIS MATTERS:
+# If an attacker compromises your pod, they can't:
+# - Reach other services in the cluster
+# - Scan the network
+# - Exfiltrate data to external hosts (except allowed)
+#
+# REQUIRES: A CNI that supports NetworkPolicy (Cilium, Calico)
+# The default AWS VPC CNI does NOT enforce NetworkPolicy.
+# You need Cilium or Calico installed.
+###############################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: church-cms
+  labels:
+    app: church-cms
+spec:
+  podSelector:
+    matchLabels:
+      app: church-cms
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from ALB / Ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Allow Prometheus to scrape metrics
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9464
+  egress:
+    # Allow DNS lookups (required for everything)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow PostgreSQL
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8  # VPC CIDR (RDS is in the VPC)
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Allow OTEL collector
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 4318
+    # Allow HTTPS egress (for Secrets Manager, if needed)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

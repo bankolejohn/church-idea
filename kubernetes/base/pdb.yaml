@@ -1,0 +1,28 @@
+###############################################
+# Church CMS - PodDisruptionBudget
+#
+# WHAT PDB DOES:
+# Prevents Kubernetes from evicting TOO MANY pods at once
+# during voluntary disruptions (node upgrades, scaling down,
+# cluster maintenance).
+#
+# THIS POLICY:
+# "Always keep at least 1 pod running"
+# This means: during a node drain, K8s will evict pods one by one,
+# waiting for a new pod to be ready before evicting the next.
+#
+# WITHOUT PDB:
+# K8s could drain a node and kill ALL your pods simultaneously
+# → downtime during maintenance windows.
+###############################################
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: church-cms
+  labels:
+    app: church-cms
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: church-cms

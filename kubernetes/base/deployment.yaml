@@ -1,0 +1,142 @@
+###############################################
+# Church CMS - Deployment
+#
+# WHY DEPLOYMENT (not Pod directly):
+# A Deployment manages ReplicaSets which manage Pods.
+# It provides: rolling updates, rollback, scaling,
+# and self-healing (restarts crashed pods).
+#
+# You NEVER create Pods directly in production.
+###############################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: church-cms
+  labels:
+    app: church-cms
+    app.kubernetes.io/name: church-cms
+    app.kubernetes.io/component: api
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 2
+  # How Kubernetes finds which pods belong to this Deployment
+  selector:
+    matchLabels:
+      app: church-cms
+  # Rolling update strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Allow 1 extra pod during updates
+      maxUnavailable: 0  # Never have fewer than desired count
+  template:
+    metadata:
+      labels:
+        app: church-cms
+        app.kubernetes.io/name: church-cms
+        app.kubernetes.io/component: api
+      annotations:
+        # Force pod restart when configmap changes
+        checksum/config: "placeholder"
+    spec:
+      serviceAccountName: church-cms
+      # Security: don't run on the same node as another replica
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values: ["church-cms"]
+                topologyKey: kubernetes.io/hostname
+      # Security context at pod level
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: church-cms
+          image: ghcr.io/bankolejohn/church-idea:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+            - name: metrics
+              containerPort: 9464
+              protocol: TCP
+          # Environment variables from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: church-cms-config
+          # Secrets mounted as environment variables
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: church-cms-secrets
+                  key: DATABASE_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: church-cms-secrets
+                  key: JWT_SECRET
+          # Resource requests and limits
+          # requests = guaranteed minimum (scheduler uses this)
+          # limits = maximum allowed (OOM killed if exceeded)
+          resources:
+            requests:
+              cpu: 100m      # 0.1 CPU cores
+              memory: 128Mi  # 128 MB
+            limits:
+              cpu: 500m      # 0.5 CPU cores
+              memory: 512Mi  # 512 MB
+          # Liveness probe: is the process alive?
+          # If this fails 3 times → pod is RESTARTED
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Readiness probe: can this pod serve traffic?
+          # If this fails → pod is REMOVED from Service (no traffic)
+          # but NOT restarted
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Startup probe: is the app still starting up?
+          # Prevents liveness from killing slow-starting containers
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 10  # 5s * 10 = 50s max startup time
+          # Container security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Writable temp directory (readOnlyRootFilesystem requires this)
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      # Graceful shutdown: K8s sends SIGTERM, waits this long, then SIGKILL
+      terminationGracePeriodSeconds: 30

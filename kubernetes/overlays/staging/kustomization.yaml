@@ -1,0 +1,50 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: church-cms-staging
+
+namespace: church-cms-staging
+
+resources:
+  - ../../base
+
+patches:
+  # 2 replicas for staging
+  - target:
+      kind: Deployment
+      name: church-cms
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  # Adjust HPA
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: church-cms
+    patch: |
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 5
+  # Set staging domain
+  - target:
+      kind: Ingress
+      name: church-cms
+    patch: |
+      - op: replace
+        path: /spec/rules/0/host
+        value: staging.churchidea.johndesiventures.website
+
+configMapGenerator:
+  - name: church-cms-config
+    behavior: merge
+    literals:
+      - NODE_ENV=staging
+      - LOG_LEVEL=info
+
+images:
+  - name: ghcr.io/bankolejohn/church-idea
+    newTag: staging
