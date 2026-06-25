@@ -1,0 +1,21 @@
+# Trivy False Positives / Accepted Risks
+# ────────────────────────────────────────────────────────────────────
+# Each entry below suppresses a specific finding that has been reviewed
+# and accepted as a known risk or false positive.
+#
+# FORMAT: CVE-YYYY-NNNNN or vulnerability ID
+# REVIEW: All entries must be reviewed quarterly
+# LAST REVIEWED: 2026-06-22
+#
+# HOW TO USE:
+# If Trivy reports a vulnerability that is:
+#   - Not applicable to your use case (e.g., a Windows-only vuln on Linux)
+#   - Already mitigated by other controls
+#   - A false positive (scanner misidentified the version)
+# Add it here with a comment explaining WHY it's accepted.
+#
+# IMPORTANT: Never suppress a finding without documenting the justification.
+# ────────────────────────────────────────────────────────────────────
+
+# Example (uncomment if needed):
+# CVE-2024-XXXXX  # Not applicable: affects Windows only, we run Linux containers

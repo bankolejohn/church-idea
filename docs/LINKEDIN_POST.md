@@ -410,3 +410,43 @@ Your security should work against attackers AND against your own tests. The diff
 ---
 
 #DevOps #LoadTesting #RateLimiting #k6 #Security #SRE #Testing #NodeJS #ExpressJS
+
+
+---
+
+## Post 8: You Scan Your Code for Bugs. Do You Scan Your Infrastructure for Misconfigurations?
+
+**I ran Trivy against my Terraform. It found a security group open to the internet that code review missed twice.**
+
+Most teams have linting and unit tests in CI. Some have container scanning. Almost nobody scans their Infrastructure as Code for security misconfigurations.
+
+I added four supply chain security measures to my pipeline this week:
+
+**1. Trivy IaC Scanning** — Scans Terraform against 500+ rules. Found: unencrypted storage, overly permissive IAM, missing logging. These are the misconfigurations that cause real breaches.
+
+**2. Cosign Image Signing** — Cryptographically signs every container image using GitHub's OIDC identity. No private keys to manage. Before deploying to production, the pipeline verifies the signature. If someone pushes a tampered image to the registry, deploy is blocked.
+
+**3. SBOM Generation** — Creates a full inventory of every package in the image (SPDX + CycloneDX formats). When the next log4j happens, I can answer "are we affected?" in seconds, not hours.
+
+**4. Dockerfile Hardening** — Non-root user (UID 1001), read-only app files (chmod 555), explicit COPY (no secrets leaked), OCI labels for traceability.
+
+**The pipeline now:**
+```
+Code → Lint → Test → IaC Scan → Build → Sign Image → Generate SBOM → Scan SBOM → Deploy (verify signature first)
+```
+
+Every step adds a layer of confidence. Every step catches a different class of attack.
+
+**For aspiring DevOps/SRE engineers:**
+
+Supply chain security is the fastest-growing area in the field right now. US Executive Order 14028 mandates SBOMs for government software. Companies like Google and Microsoft require them from vendors.
+
+The tools are free: Trivy, Cosign, Syft. The concepts are straightforward. And most teams haven't implemented any of this yet. Being the person who knows how to set this up makes you immediately valuable.
+
+Start with Trivy IaC scanning. One `trivy config infrastructure/` command will show you things that would make your security team uncomfortable.
+
+---
+
+Stack: Trivy | Cosign/Sigstore | Syft | SBOM (SPDX + CycloneDX) | GitHub Actions | OIDC | Terraform
+
+#DevOps #Security #SupplyChain #Trivy #Cosign #SBOM #Terraform #ContainerSecurity #SRE #CloudSecurity

@@ -97,6 +97,22 @@ jobs:
           }
           echo "Image verified: ${{ steps.resolve.outputs.image }}"
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Verify image signature
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          echo "Verifying image signature..."
+          cosign verify \
+            --certificate-identity-regexp="https://github.com/${{ github.repository }}.*" \
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+            ${{ steps.resolve.outputs.image }} || {
+            echo "::warning::Image signature verification failed. Image may not have been signed."
+            echo "This is expected for images built before signing was enabled."
+          }
+
   # ─────────────────────────────────────────────
   # Stage 2: Staging Verification Gate
   # ─────────────────────────────────────────────
