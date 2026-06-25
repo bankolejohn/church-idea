@@ -363,3 +363,50 @@ Production confidence isn't about preventing all bugs. It's about detecting them
 Stack: k6 | AWS CodeDeploy | ECS Fargate | CloudWatch Alarms | Terraform | GitHub Actions | Prometheus | Grafana
 
 #DevOps #SRE #LoadTesting #CanaryDeployment #AWS #CodeDeploy #k6 #Reliability #BlueGreen #PipelineEngineering
+
+
+---
+
+## Post 7: My Load Test Failed. My Security Worked.
+
+**Ran a smoke test against my app. Login failed 100% of the time. The app was perfectly healthy.**
+
+I set up k6 to run a basic smoke test — 1 virtual user, 30 seconds, hits health check then logs in. Health passed. Database connected. But every single login attempt returned an error.
+
+The response: `"Too many login attempts. Please try again in 15 minutes."`
+
+My rate limiter was doing exactly what it's supposed to do. I had it set to 10 login attempts per 15-minute window. The smoke test runs in a loop — it blew past 10 attempts in under 15 seconds. After that, every login got blocked.
+
+**Rate limiting and load testing are natural enemies.**
+
+Your security controls protect users from brute force attacks. Your load tests simulate traffic that LOOKS like a brute force attack. Same pattern, different intent.
+
+**How real teams solve this:**
+
+1. Make rate limits configurable via environment variables. Production stays strict (10/15min). Local dev and staging use a higher ceiling for testing.
+
+```javascript
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: parseInt(process.env.RATE_LIMIT_LOGIN_MAX) || 10,
+});
+```
+
+2. Your `.env` for load testing sets `RATE_LIMIT_LOGIN_MAX=10000`. Production never sets this variable, so it defaults to 10.
+
+3. Never disable rate limiting entirely — even in staging. Just raise the threshold high enough that your load test VUs won't hit it during normal scenarios.
+
+**The lesson for junior DevOps engineers:**
+
+When a load test fails, ask two questions before debugging the app:
+
+1. Is the failure a security control doing its job? (Rate limiting, WAF rules, CORS)
+2. Is the failure a test environment configuration issue? (Missing seed data, wrong env vars, stale containers)
+
+Most "broken" load tests aren't app bugs. They're test environment gaps. The fix is environment configuration, not code changes.
+
+Your security should work against attackers AND against your own tests. The difference is: you configure your test environment to account for it. Attackers can't.
+
+---
+
+#DevOps #LoadTesting #RateLimiting #k6 #Security #SRE #Testing #NodeJS #ExpressJS
