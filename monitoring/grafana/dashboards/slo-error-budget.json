@@ -1,0 +1,340 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Availability SLO (Target: 99.9%)",
+      "description": "Current 30-day rolling availability. Green = meeting SLO. Red = violating.",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "slo:availability:ratio30d * 100",
+          "legendFormat": "Availability %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 99,
+          "max": 100,
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 99.5 },
+              { "color": "yellow", "value": 99.8 },
+              { "color": "green", "value": 99.9 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Error Budget Remaining",
+      "description": "How much of your monthly error budget is left. 100% = no errors used. 0% = budget exhausted.",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "clamp_min(slo:error_budget_remaining * 100, 0)",
+          "legendFormat": "Budget %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 25 },
+              { "color": "yellow", "value": 50 },
+              { "color": "green", "value": 75 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Latency SLO (Target: 99% < 1s)",
+      "description": "Percentage of requests completing under 1 second over 30 days.",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "slo:latency_good_ratio:rate30d * 100",
+          "legendFormat": "% under 1s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 95,
+          "max": 100,
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 97 },
+              { "color": "yellow", "value": 98.5 },
+              { "color": "green", "value": 99 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Latency Budget Remaining",
+      "description": "Error budget for latency SLO.",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "clamp_min(slo:latency_budget_remaining * 100, 0)",
+          "legendFormat": "Budget %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 25 },
+              { "color": "yellow", "value": 50 },
+              { "color": "green", "value": 75 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Burn Rate (1h window)",
+      "description": "How fast you're consuming error budget. 1 = sustainable. >14 = exhausts in 2 days.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "slo:burn_rate:1h",
+          "legendFormat": "1h burn rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "orange", "value": 6 },
+              { "color": "red", "value": 14.4 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Burn Rate (6h window)",
+      "description": "Slower burn detection. >6 = exhausts in 5 days.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "slo:burn_rate:6h",
+          "legendFormat": "6h burn rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "orange", "value": 6 },
+              { "color": "red", "value": 14.4 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Total Requests (30d)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "slo:requests_total:rate30d",
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "title": "Total Errors (30d)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "slo:errors_total:rate30d",
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Error Budget Consumption Over Time",
+      "description": "Shows how the error budget decreases over the 30-day window. A straight line to 0 at day 30 = perfectly on budget.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "clamp_min(slo:error_budget_remaining * 100, 0)",
+          "legendFormat": "Availability Budget %"
+        },
+        {
+          "expr": "clamp_min(slo:latency_budget_remaining * 100, 0)",
+          "legendFormat": "Latency Budget %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "orange", "value": 25 },
+              { "color": "green", "value": 50 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Burn Rate Over Time",
+      "description": "Tracks how fast error budget is being consumed. Sustained >1 means budget will exhaust before the window ends.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "slo:burn_rate:1h",
+          "legendFormat": "1h burn rate"
+        },
+        {
+          "expr": "slo:burn_rate:6h",
+          "legendFormat": "6h burn rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 5,
+            "lineWidth": 2,
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 6 },
+              { "color": "red", "value": 14.4 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "SLO Summary",
+      "type": "table",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "slo:availability:ratio30d * 100",
+          "legendFormat": "Availability",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "slo:latency_good_ratio:rate30d * 100",
+          "legendFormat": "Latency (% < 1s)",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "clamp_min(slo:error_budget_remaining * 100, 0)",
+          "legendFormat": "Avail Budget Remaining %",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "clamp_min(slo:latency_budget_remaining * 100, 0)",
+          "legendFormat": "Latency Budget Remaining %",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["church-cms", "slo", "error-budget"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "Prometheus" }
+      }
+    ]
+  },
+  "time": { "from": "now-7d", "to": "now" },
+  "title": "Church CMS - SLO & Error Budget",
+  "uid": "churchcms-slo-error-budget"
+}

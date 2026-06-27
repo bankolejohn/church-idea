@@ -12,25 +12,34 @@
 #                                    ▼         ▼         ▼
 #                                  Slack   PagerDuty   Email
 #
-# KEY FEATURES:
-# - Grouping: if 10 pods crash, you get 1 alert (not 10)
-# - Silencing: suppress alerts during maintenance
-# - Inhibition: if cluster is down, don't also alert about each service
-# - Routing: critical → PagerDuty, warning → Slack, info → email
+# HOW TO SET UP SLACK INTEGRATION:
+# 1. Go to https://api.slack.com/apps → Create New App → From scratch
+# 2. Name: "Church CMS Alerts", Workspace: your workspace
+# 3. Features → Incoming Webhooks → Activate
+# 4. Add New Webhook to Workspace → Select channel (#alerts)
+# 5. Copy the webhook URL
+# 6. Set it as an environment variable: SLACK_WEBHOOK_URL
+# 7. Restart alertmanager: docker compose restart alertmanager
+#
+# CHANNELS (recommended setup):
+# - #alerts-critical → Pages on-call, requires immediate action
+# - #alerts-warning  → Reviewed during business hours
+# - #alerts-resolved → Confirmation that issues are fixed
 #
 # FOR LOCAL DEV:
-# We use a webhook receiver that just logs to stdout.
-# In production, you'd add Slack/PagerDuty/Opsgenie integrations.
+# If SLACK_WEBHOOK_URL is not set, alerts go to the webhook_configs
+# which just logs them (visible in alertmanager logs).
 # ──────────────────────────────────────────────────────────────────────
 
 global:
   resolve_timeout: 5m
+  # Slack API URL (set via environment variable or replace directly)
+  slack_api_url: '${SLACK_WEBHOOK_URL:-http://localhost:9093/api/v1/alerts}'
 
 # ─── Route Tree ───────────────────────────────────────────────────
-# Routes determine where alerts go based on labels.
 route:
   # Default receiver (catch-all)
-  receiver: 'log-alerts'
+  receiver: 'slack-default'
 
   # Group alerts by alertname — so 5 "HighLatency" alerts become 1 notification
   group_by: ['alertname', 'severity']
@@ -46,56 +55,84 @@ route:
 
   # Child routes (more specific rules)
   routes:
-    # Critical alerts → immediate notification
+    # Critical alerts → immediate notification (short wait)
     - match:
         severity: critical
-      receiver: 'critical-alerts'
+      receiver: 'slack-critical'
       group_wait: 10s
       repeat_interval: 1h
+      continue: false
 
     # Warning alerts → less urgent
     - match:
         severity: warning
-      receiver: 'warning-alerts'
+      receiver: 'slack-warning'
       group_wait: 1m
       repeat_interval: 4h
+      continue: false
 
 # ─── Receivers ────────────────────────────────────────────────────
-# In production, replace these with real integrations:
-#
-# Slack example:
-#   - name: 'slack-critical'
-#     slack_configs:
-#       - api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
-#         channel: '#alerts-critical'
-#         title: '{{ .GroupLabels.alertname }}'
-#         text: '{{ .CommonAnnotations.summary }}'
-#
-# PagerDuty example:
-#   - name: 'pagerduty-critical'
-#     pagerduty_configs:
-#       - service_key: 'YOUR_PAGERDUTY_SERVICE_KEY'
-#         severity: '{{ .CommonLabels.severity }}'
-
 receivers:
-  - name: 'log-alerts'
-    webhook_configs:
-      - url: 'http://alertmanager:9093/api/v1/alerts'
+  # Critical: Red alert, mentions @channel
+  - name: 'slack-critical'
+    slack_configs:
+      - channel: '#alerts-critical'
         send_resolved: true
+        color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+        title: '🚨 {{ .GroupLabels.alertname }} [{{ .Status | toUpper }}]'
+        text: |-
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
+          *Severity:* {{ .CommonLabels.severity }}
+          *Runbook:* {{ .CommonAnnotations.runbook }}
 
-  - name: 'critical-alerts'
-    webhook_configs:
-      - url: 'http://alertmanager:9093/api/v1/alerts'
-        send_resolved: true
+          *Firing:* {{ .Alerts.Firing | len }} | *Resolved:* {{ .Alerts.Resolved | len }}
+          {{ range .Alerts.Firing }}
+          • {{ .Annotations.summary }} (since {{ .StartsAt.Format "15:04:05" }})
+          {{ end }}
+        actions:
+          - type: button
+            text: 'View in Prometheus'
+            url: 'http://localhost:9090/alerts'
+          - type: button
+            text: 'View Grafana'
+            url: 'http://localhost:3001/d/churchcms-app-overview'
 
-  - name: 'warning-alerts'
-    webhook_configs:
-      - url: 'http://alertmanager:9093/api/v1/alerts'
+  # Warning: Yellow alert
+  - name: 'slack-warning'
+    slack_configs:
+      - channel: '#alerts-warning'
         send_resolved: true
+        color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+        title: '⚠️ {{ .GroupLabels.alertname }} [{{ .Status | toUpper }}]'
+        text: |-
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
+          *Runbook:* {{ .CommonAnnotations.runbook }}
+
+          {{ range .Alerts.Firing }}
+          • {{ .Annotations.summary }}
+          {{ end }}
+        actions:
+          - type: button
+            text: 'View in Prometheus'
+            url: 'http://localhost:9090/alerts'
+
+  # Default: catch-all
+  - name: 'slack-default'
+    slack_configs:
+      - channel: '#alerts'
+        send_resolved: true
+        color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+        title: '{{ .GroupLabels.alertname }} [{{ .Status | toUpper }}]'
+        text: |-
+          {{ .CommonAnnotations.summary }}
+          {{ range .Alerts.Firing }}
+          • {{ .Annotations.description }}
+          {{ end }}
 
 # ─── Inhibition Rules ─────────────────────────────────────────────
 # If a critical alert fires, suppress warnings for the same alertname.
-# Example: if ServiceDown fires, don't also send HighLatency (obviously it's slow — it's DOWN)
 inhibit_rules:
   - source_match:
       severity: 'critical'

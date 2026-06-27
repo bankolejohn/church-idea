@@ -1,0 +1,99 @@
+# ──────────────────────────────────────────────────────────────────────
+# SLO Recording Rules
+#
+# WHAT RECORDING RULES DO:
+# Instead of calculating complex PromQL queries on every dashboard load,
+# recording rules PRE-COMPUTE them every 15 seconds and store the result
+# as a new metric. This makes dashboards fast and SLO queries simple.
+#
+# OUR SLOs:
+# 1. Availability: 99.9% of requests succeed (error budget: 0.1%)
+# 2. Latency: 99% of requests complete in < 1 second
+#
+# WHAT "ERROR BUDGET" MEANS:
+# If your SLO is 99.9% availability over 30 days:
+#   - Total request budget: 100%
+#   - Error budget: 0.1% = allowed failures
+#   - In a 30-day window with 1M requests: 1,000 can fail
+#   - If you've used 500 failures by day 15: you're on track
+#   - If you've used 900 by day 15: you're burning too fast
+#
+# The burn rate tells you: "At this rate, when will I exhaust my budget?"
+# ──────────────────────────────────────────────────────────────────────
+
+groups:
+  - name: slo-recording
+    interval: 30s
+    rules:
+      # ─── Availability SLO (99.9%) ─────────────────────────────────
+      # Total requests (all status codes) — rolling 30 days
+      - record: slo:requests_total:rate30d
+        expr: sum(increase(churchcms_http_requests_total[30d]))
+
+      # Failed requests (5xx only) — rolling 30 days
+      - record: slo:errors_total:rate30d
+        expr: sum(increase(churchcms_http_requests_total{status_code=~"5.."}[30d]))
+
+      # Current error ratio (0 to 1)
+      - record: slo:error_ratio:rate30d
+        expr: |
+          sum(increase(churchcms_http_requests_total{status_code=~"5.."}[30d]))
+          / sum(increase(churchcms_http_requests_total[30d]))
+
+      # Error budget remaining (1 = 100% remaining, 0 = exhausted)
+      - record: slo:error_budget_remaining
+        expr: |
+          1 - (
+            sum(increase(churchcms_http_requests_total{status_code=~"5.."}[30d]))
+            / (sum(increase(churchcms_http_requests_total[30d])) * 0.001)
+          )
+
+      # Availability percentage (last 30 days)
+      - record: slo:availability:ratio30d
+        expr: |
+          1 - (
+            sum(increase(churchcms_http_requests_total{status_code=~"5.."}[30d]))
+            / sum(increase(churchcms_http_requests_total[30d]))
+          )
+
+      # ─── Short-window availability (for burn rate) ────────────────
+      # 1-hour window
+      - record: slo:error_ratio:rate1h
+        expr: |
+          sum(rate(churchcms_http_requests_total{status_code=~"5.."}[1h]))
+          / sum(rate(churchcms_http_requests_total[1h]))
+
+      # 6-hour window
+      - record: slo:error_ratio:rate6h
+        expr: |
+          sum(rate(churchcms_http_requests_total{status_code=~"5.."}[6h]))
+          / sum(rate(churchcms_http_requests_total[6h]))
+
+      # ─── Burn rates ───────────────────────────────────────────────
+      # How fast are we consuming error budget?
+      # burn_rate = error_ratio / slo_target
+      # burn_rate of 1 = consuming at exactly the sustainable rate
+      # burn_rate of 14.4 = will exhaust 30-day budget in 2 days
+
+      - record: slo:burn_rate:1h
+        expr: slo:error_ratio:rate1h / 0.001
+
+      - record: slo:burn_rate:6h
+        expr: slo:error_ratio:rate6h / 0.001
+
+      # ─── Latency SLO (99% < 1s) ──────────────────────────────────
+      # Percentage of requests under 1 second
+      - record: slo:latency_good_ratio:rate30d
+        expr: |
+          sum(increase(churchcms_http_request_duration_seconds_bucket{le="1"}[30d]))
+          / sum(increase(churchcms_http_request_duration_seconds_count[30d]))
+
+      # Latency error budget remaining
+      - record: slo:latency_budget_remaining
+        expr: |
+          1 - (
+            (1 - (
+              sum(increase(churchcms_http_request_duration_seconds_bucket{le="1"}[30d]))
+              / sum(increase(churchcms_http_request_duration_seconds_count[30d]))
+            )) / 0.01
+          )
