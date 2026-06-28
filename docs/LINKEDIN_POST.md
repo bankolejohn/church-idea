@@ -450,3 +450,54 @@ Start with Trivy IaC scanning. One `trivy config infrastructure/` command will s
 Stack: Trivy | Cosign/Sigstore | Syft | SBOM (SPDX + CycloneDX) | GitHub Actions | OIDC | Terraform
 
 #DevOps #Security #SupplyChain #Trivy #Cosign #SBOM #Terraform #ContainerSecurity #SRE #CloudSecurity
+
+
+---
+
+## Post 10: I Deployed to AWS With Terraform. It Took 50 Minutes and 3 Failures. Here's What I Learned.
+
+**First `terraform apply` failed. Second one failed. Third one worked. That's normal.**
+
+I deployed a Node.js app to AWS (ECS Fargate + RDS + ALB + HTTPS) using Terraform. It created 37 resources. Here are the real lessons — the ones nobody tells you in tutorials.
+
+**1. Terraform partial failures are expected on first deploy.**
+
+My first `apply` created 35 out of 37 resources. The HTTPS listener failed because the ACM certificate wasn't validated yet. The ECS service failed because it depends on the listener. Fix one → the other resolves. `terraform apply` again — picks up where it left off. Don't panic. Don't destroy.
+
+**2. Your app will start before your database has tables.**
+
+Terraform creates the infrastructure. But an empty RDS instance has no tables. The app starts, connects to PostgreSQL, tries `SELECT * FROM users` — fails. You need to run migrations SEPARATELY. This is by design — migrations and deploys are different concerns.
+
+**3. DNS has two steps, not one.**
+
+For HTTPS on a custom domain, you need TWO DNS records:
+- One to VALIDATE the ACM certificate (proves you own the domain)
+- One to ROUTE traffic to the ALB (so users actually reach your app)
+
+Miss either one and you'll spend an hour wondering why it's broken.
+
+**4. Never use `~` in CLI flag arguments.**
+
+```bash
+# FAILS — Terraform reads "~" literally
+terraform init -plugin-dir=~/.terraform.d/plugins
+
+# WORKS — shell expands the full path
+terraform init -plugin-dir=/Users/john/.terraform.d/plugins
+```
+
+The tilde only works when the SHELL expands it. Inside flag values, it's just a character.
+
+**5. "The app loads but doesn't work" means check the API separately.**
+
+The frontend (HTML/CSS) loaded fine. Login failed. Debugging with curl showed the API worked perfectly — the issue was DNS propagation. Always test layers independently: `curl /health`, `curl /ready`, `curl /api/login`. Don't assume the frontend represents the truth.
+
+**For aspiring DevOps engineers:**
+
+Deployment tutorials show the happy path. Production teaches you the failure paths. The difference between junior and senior isn't knowing Terraform syntax — it's knowing that partial failures are normal, that DNS takes time, and that debugging means isolating layers.
+
+Deploy something real. Break it. Fix it. Document it. That's the path.
+
+---
+
+#DevOps #Terraform #AWS #ECS #Deployment #InfrastructureAsCode #CloudEngineering #SRE #Troubleshooting
