@@ -581,3 +581,113 @@ This applies to ANY CLI tool that takes a path as a flag value. Always use absol
 - In a real company: you'd set up a Terraform provider mirror (Artifactory, S3, or filesystem) so the team never downloads from the internet directly
 
 ---
+
+## Issue #7: App Serves Frontend But Login Fails — "Connection Error"
+
+**Date:** June 28, 2026  
+**Environment:** AWS ECS Fargate (dev), accessed via HTTPS  
+**Severity:** App appears broken to users (can see login page but can't log in)
+
+### Symptoms
+
+- The app's login page loads correctly in the browser (HTML/CSS/JS served fine)
+- Entering credentials and clicking Login shows: "Connection error. Please try again."
+- The error is a generic frontend error — no specific HTTP status code visible
+- The ALB health checks pass (ECS service is "steady state")
+- Accessing `/health` and `/ready` directly returns 200 OK
+
+### Investigation Steps
+
+1. **Check ECS service status:**
+   ```bash
+   aws ecs describe-services --cluster church-cms-dev-cluster --services church-cms-dev-service \
+     --query 'services[0].{desired:desiredCount,running:runningCount,status:status}'
+   ```
+   Result: `running: 1, status: ACTIVE` — container is running fine.
+
+2. **Check health endpoints directly (via ALB DNS, bypassing custom domain):**
+   ```bash
+   curl -sk https://church-cms-dev-alb-XXXXXXX.us-east-1.elb.amazonaws.com/health
+   # {"status":"ok","timestamp":"...","uptime":2317}
+
+   curl -sk https://church-cms-dev-alb-XXXXXXX.us-east-1.elb.amazonaws.com/ready
+   # {"status":"ready","database":"connected"}
+   ```
+   Result: App AND database are working perfectly.
+
+3. **Test login API directly:**
+   ```bash
+   curl -sk -X POST https://church-cms-dev-alb-XXXXXXX.us-east-1.elb.amazonaws.com/api/login \
+     -H "Content-Type: application/json" \
+     -d '{"username":"admin","password":"admin123"}'
+   # {"token":"eyJ...","user":{"id":1,"username":"admin","role":"main_leader"}}
+   ```
+   Result: Login works. Token is returned. The app backend is fully functional.
+
+4. **The actual problem:** DNS for the custom domain wasn't resolving:
+   ```bash
+   curl -v https://churchidea.johndesiventures.website/health
+   # Could not resolve host: churchidea.johndesiventures.website
+   ```
+
+### Root Cause
+
+**Two issues combined:**
+
+1. **Database migrations hadn't been run.** The app started but had no tables — login queries returned errors. Fixed by running a one-off ECS task with migration commands.
+
+2. **DNS CNAME for the custom domain wasn't configured.** The ACM certificate was validated (for HTTPS), but the actual `churchidea` CNAME pointing to the ALB wasn't added in Namecheap. The browser loaded a cached version of the page, but API calls to the domain failed because DNS wasn't resolving.
+
+### Resolution
+
+**Step 1: Run database migrations (one-off ECS task):**
+```bash
+SUBNET=$(aws ec2 describe-subnets --filters "Name=tag:Name,Values=church-cms-dev-public-1" \
+  --query 'Subnets[0].SubnetId' --output text)
+SG=$(aws ec2 describe-security-groups --filters "Name=tag:Name,Values=church-cms-dev-ecs-sg" \
+  --query 'SecurityGroups[0].GroupId' --output text)
+
+aws ecs run-task \
+  --cluster church-cms-dev-cluster \
+  --task-definition church-cms-dev \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+  --overrides '{"containerOverrides":[{"name":"church-cms-app","command":["sh","-c","node db/migrate.js && node db/seed.js"]}]}'
+```
+
+**Step 2: Add DNS CNAME record in Namecheap:**
+
+| Type | Host | Target |
+|------|------|--------|
+| CNAME | `churchidea` | `church-cms-dev-alb-XXXXXXX.us-east-1.elb.amazonaws.com` |
+
+**Step 3: Wait 2-5 minutes for DNS propagation, then hard-refresh browser (Cmd+Shift+R)**
+
+### Key Debugging Lesson
+
+When an app "loads but doesn't work," there are usually two layers:
+- **Static assets (HTML/CSS/JS):** Served from the container's `/public` folder via Express static middleware. These work as long as the container is running.
+- **API calls (login, data fetching):** Require the FULL stack: container → database → response. These break independently of the frontend.
+
+Always test the API layer directly with `curl` before assuming the app is broken:
+```bash
+curl -sk https://<ALB-DNS>/health   # Is the container alive?
+curl -sk https://<ALB-DNS>/ready    # Is the database connected?
+curl -sk -X POST https://<ALB-DNS>/api/login -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'  # Does auth work?
+```
+
+If ALL three return 200 but the browser shows errors → the problem is DNS, CORS, or mixed content — NOT the app.
+
+### DNS Records Required (Summary)
+
+After deploying with Terraform, you need TWO DNS records in Namecheap:
+
+| Purpose | Type | Host | Target |
+|---------|------|------|--------|
+| ACM Certificate Validation | CNAME | `_xxxxx.churchidea` | `_yyyyy.acm-validations.aws.` |
+| Route traffic to ALB | CNAME | `churchidea` | `church-cms-dev-alb-XXXXX.us-east-1.elb.amazonaws.com` |
+
+The first proves domain ownership (required for HTTPS). The second routes actual user traffic.
+
+---
