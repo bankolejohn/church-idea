@@ -464,3 +464,120 @@ HEALTHCHECK CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/healt
 - Test health checks early — don't wait until you add dependent services to discover they've been failing all along.
 
 ---
+
+## Issue #6: Terraform Init Fails — AWS Provider Download Timeout/Failure
+
+**Date:** June 25, 2026  
+**Environment:** Local development (macOS darwin_amd64, Terraform v1.5.7)  
+**Severity:** Blocks all infrastructure deployment
+
+### Symptoms
+
+- `terraform init` hangs during "Installing hashicorp/aws..."
+- Eventually fails with: `Error while installing hashicorp/aws v5.100.0: provider binary not found`
+- Or: `could not find executable file starting with terraform-provider-aws`
+- Registry IS reachable (curl to registry.terraform.io works)
+- The issue is downloading the ~350-400MB provider binary
+
+### Root Cause
+
+The AWS Terraform provider binary is very large (~350-400MB for v5.100.0). On slow or constrained network connections (VPN, throttled ISP, Kiro terminal sessions), the download times out or gets corrupted before completing.
+
+Additionally, `terraform init` doesn't resume failed downloads — it starts from zero every time.
+
+### Resolution
+
+**Step 1: Pin a specific (smaller) provider version**
+
+Change `~> 5.0` (which resolves to the latest, largest version) to a specific pinned version:
+
+```hcl
+required_providers {
+  aws = {
+    source  = "hashicorp/aws"
+    version = "5.31.0"  # Pinned — smaller than 5.100.0
+  }
+}
+```
+
+**Step 2: Manually download the provider binary**
+
+Download via browser (faster, resumable) from:
+```
+https://releases.hashicorp.com/terraform-provider-aws/5.31.0/terraform-provider-aws_5.31.0_darwin_amd64.zip
+```
+
+Or via curl in your terminal (not through an IDE terminal which may have network limits):
+```bash
+curl -L -o /tmp/terraform-provider-aws.zip \
+  "https://releases.hashicorp.com/terraform-provider-aws/5.31.0/terraform-provider-aws_5.31.0_darwin_amd64.zip"
+```
+
+**Step 3: Create the filesystem mirror directory**
+
+```bash
+mkdir -p ~/.terraform.d/plugins/registry.terraform.io/hashicorp/aws/5.31.0/darwin_amd64
+
+unzip /tmp/terraform-provider-aws.zip \
+  -d ~/.terraform.d/plugins/registry.terraform.io/hashicorp/aws/5.31.0/darwin_amd64/
+
+chmod +x ~/.terraform.d/plugins/registry.terraform.io/hashicorp/aws/5.31.0/darwin_amd64/terraform-provider-aws_*
+```
+
+**Step 4: Init with the filesystem mirror**
+
+```bash
+cd infrastructure/terraform/environments/dev
+rm -rf .terraform .terraform.lock.hcl
+terraform init -plugin-dir=/Users/bankolejohn/.terraform.d/plugins
+```
+
+### Critical Gotcha: ~ Does Not Expand in -plugin-dir
+
+```bash
+# WRONG — Terraform takes this literally, looks for a directory called "~"
+terraform init -plugin-dir=~/.terraform.d/plugins
+# Error: cannot search ~/.terraform.d/plugins: lstat ~/.terraform.d/plugins: no such file or directory
+
+# CORRECT — use the full absolute path
+terraform init -plugin-dir=/Users/bankolejohn/.terraform.d/plugins
+```
+
+The `~` shorthand is a SHELL feature (bash/zsh expands it before passing to the program). But when Terraform receives `-plugin-dir=~/.terraform.d/plugins` as a flag value, it interprets the `~` as a literal character, not your home directory.
+
+This applies to ANY CLI tool that takes a path as a flag value. Always use absolute paths in flag arguments.
+
+### Prevention
+
+1. **Pin provider versions** — don't use `~> 5.0` which always resolves to the latest (and largest). Pin to a specific version you've tested.
+
+2. **Use a provider cache** — set `TF_PLUGIN_CACHE_DIR` in your shell profile:
+   ```bash
+   # Add to ~/.zshrc
+   export TF_PLUGIN_CACHE_DIR="$HOME/.terraform.d/plugin-cache"
+   mkdir -p $TF_PLUGIN_CACHE_DIR
+   ```
+   This caches downloaded providers so they're only downloaded once across all projects.
+
+3. **Filesystem mirror for CI/teams** — for teams with slow connections or air-gapped environments, maintain a shared filesystem mirror:
+   ```hcl
+   # In ~/.terraformrc or terraform.rc
+   provider_installation {
+     filesystem_mirror {
+       path    = "/path/to/shared/mirror"
+       include = ["registry.terraform.io/hashicorp/*"]
+     }
+     direct {
+       exclude = ["registry.terraform.io/hashicorp/*"]
+     }
+   }
+   ```
+
+### Lesson Learned
+
+- Terraform provider downloads are the #1 friction point for new team members and CI pipelines
+- Always pin provider versions in production code (reproducibility + smaller downloads)
+- The `~` expansion issue is subtle and wastes hours — always use `$HOME` or absolute paths in scripts and flag arguments
+- In a real company: you'd set up a Terraform provider mirror (Artifactory, S3, or filesystem) so the team never downloads from the internet directly
+
+---
