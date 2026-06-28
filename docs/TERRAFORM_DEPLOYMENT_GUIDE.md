@@ -460,6 +460,127 @@ terraform destroy
 
 ---
 
+## Redeployment After Destroy
+
+### What Happens When You Destroy and Re-Apply
+
+If you `terraform destroy` and later `terraform apply` to bring everything back, most things recreate cleanly — but some require manual intervention.
+
+**What recreates automatically (no action needed):**
+- VPC, subnets, route tables, Internet Gateway
+- IAM roles and policies
+- ECS cluster, task definition, service
+- CloudWatch log group
+- Security groups
+
+**What breaks and needs fixing:**
+
+| Issue | Why It Breaks | How to Fix |
+|-------|---------------|------------|
+| ACM certificate needs revalidation | New cert = new validation hash | Add new CNAME in Namecheap (different from last time) |
+| ALB has a new DNS name | New ALB = new random hostname | Update `churchidea` CNAME in Namecheap |
+| Database is empty | RDS destroyed = all data gone | Run migrations + seed again |
+| Secrets Manager name conflict | AWS keeps deleted secrets for 7 days | Restore + import (see below) |
+| DNS propagation delay | New records need time | Wait 2-15 minutes |
+
+### The Secrets Manager 7-Day Problem
+
+This is the sneakiest issue. When Terraform destroys a secret, AWS doesn't actually delete it — it schedules deletion in 7 days (recovery window). If you `apply` again within those 7 days:
+
+```
+Error: creating Secrets Manager Secret: resource already exists
+```
+
+**Fix:**
+
+```bash
+# Restore the pending-deletion secrets
+aws secretsmanager restore-secret --secret-id "church-cms/dev/database-url"
+aws secretsmanager restore-secret --secret-id "church-cms/dev/jwt-secret"
+
+# Import them into Terraform state (so Terraform manages them again)
+terraform import 'module.secrets.aws_secretsmanager_secret.database_url' \
+  $(aws secretsmanager describe-secret --secret-id "church-cms/dev/database-url" --query 'ARN' --output text)
+
+terraform import 'module.secrets.aws_secretsmanager_secret.jwt_secret' \
+  $(aws secretsmanager describe-secret --secret-id "church-cms/dev/jwt-secret" --query 'ARN' --output text)
+
+# Now apply works
+terraform apply
+```
+
+**Alternative:** Wait 7 days and the old secrets fully delete. Then `apply` works without import.
+
+### The Full Redeployment Sequence
+
+```bash
+# 1. Apply (creates 37 resources, ~7 minutes)
+#    First run will partially fail (ACM cert not validated)
+terraform apply
+
+# 2. Get the new ACM validation record
+terraform output certificate_validation
+# → Add new CNAME in Namecheap (the hash WILL be different from before)
+
+# 3. Wait for certificate validation (2-5 min)
+aws acm describe-certificate \
+  --certificate-arn $(aws acm list-certificates --query 'CertificateSummaryList[0].CertificateArn' --output text) \
+  --query 'Certificate.Status' --output text
+# Wait until: ISSUED
+
+# 4. Apply again (creates HTTPS listener + ECS service)
+terraform apply
+
+# 5. Run migrations (database is empty after recreate)
+SUBNET=$(aws ec2 describe-subnets --filters "Name=tag:Name,Values=church-cms-dev-public-1" \
+  --query 'Subnets[0].SubnetId' --output text)
+SG=$(aws ec2 describe-security-groups --filters "Name=tag:Name,Values=church-cms-dev-ecs-sg" \
+  --query 'SecurityGroups[0].GroupId' --output text)
+
+aws ecs run-task \
+  --cluster church-cms-dev-cluster \
+  --task-definition church-cms-dev \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+  --overrides '{"containerOverrides":[{"name":"church-cms-app","command":["sh","-c","node db/migrate.js && node db/seed.js"]}]}'
+
+# 6. Update domain CNAME (ALB DNS name changed)
+terraform output alb_raw_dns
+# → Update `churchidea` CNAME in Namecheap to the new ALB DNS
+
+# 7. Wait 2-5 minutes for DNS, then verify
+curl -s https://churchidea.johndesiventures.website/health
+curl -s https://churchidea.johndesiventures.website/ready
+```
+
+### When Would You Destroy and Redeploy?
+
+| Scenario | Action |
+|----------|--------|
+| Save money on weekends (dev/staging) | Destroy Friday, apply Monday |
+| Major infrastructure change (VPC CIDR change) | Destroy + recreate |
+| Environment is corrupted beyond repair | Destroy + recreate |
+| Learning/experimenting | Destroy freely |
+| **Production** | **NEVER destroy.** Update in place. |
+
+### Cost Savings Without Destroying Everything
+
+If you want to save compute costs without losing the database and infra:
+
+```bash
+# Scale ECS to 0 tasks (saves ~$9/month, keeps RDS + ALB running)
+aws ecs update-service --cluster church-cms-dev-cluster \
+  --service church-cms-dev-service --desired-count 0
+
+# Scale back up when needed
+aws ecs update-service --cluster church-cms-dev-cluster \
+  --service church-cms-dev-service --desired-count 1
+```
+
+This keeps RDS running (data preserved) and ALB active (DNS still works) but stops the container (no compute charges). You still pay ~$32/month for RDS + ALB.
+
+---
+
 ## Common Errors and Fixes
 
 | Error | Cause | Fix |
