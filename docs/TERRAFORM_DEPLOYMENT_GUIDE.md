@@ -104,6 +104,32 @@ terraform init
 
 ### Create terraform.tfvars (secrets file)
 
+**What is terraform.tfvars?**
+
+Terraform variables can be set in multiple ways. `terraform.tfvars` is a file that provides VALUES for variables declared in `variables.tf`. Think of it like `.env` for Terraform — it holds the secrets and environment-specific configuration that shouldn't be in code.
+
+**Why a separate file?**
+
+Your `variables.tf` declares:
+```hcl
+variable "db_password" {
+  type      = string
+  sensitive = true  # Terraform won't show this in plan output
+}
+```
+
+But it doesn't set a VALUE. The value comes from `terraform.tfvars`:
+```hcl
+db_password = "ChurchCms2026Secure!"
+```
+
+This separation means:
+- `variables.tf` is committed to git (declares WHAT secrets exist)
+- `terraform.tfvars` is NOT committed (contains the ACTUAL secret values)
+- Anyone cloning the repo can see what variables they need to set, without seeing your passwords
+
+**What goes in terraform.tfvars:**
+
 ```bash
 cat > terraform.tfvars << EOF
 db_username = "churchadmin"
@@ -112,7 +138,51 @@ jwt_secret  = "$(openssl rand -hex 32)"
 EOF
 ```
 
-**NEVER commit this file.** It contains database credentials. It's already in `.gitignore`.
+| Variable | What It's For | How to Generate |
+|----------|--------------|-----------------|
+| `db_username` | PostgreSQL admin username | Choose any name (avoid "admin" or "postgres" — these are targeted by attackers) |
+| `db_password` | PostgreSQL admin password | `openssl rand -base64 24` (random, 24+ chars) |
+| `jwt_secret` | Signs JWT tokens for user authentication | `openssl rand -hex 32` (random 64-char hex string) |
+
+**Security rules for terraform.tfvars:**
+1. NEVER commit it to git (it's in `.gitignore`)
+2. NEVER share it in Slack/email
+3. NEVER use the same values across environments (dev ≠ staging ≠ prod)
+4. Store a backup in a password manager (1Password, Bitwarden)
+5. If compromised: rotate immediately (`terraform apply` with new values recreates secrets)
+
+**Alternative ways to provide variables (for CI/CD):**
+
+```bash
+# Option 1: Command-line flags (good for CI)
+terraform apply -var="db_password=xxx" -var="jwt_secret=yyy"
+
+# Option 2: Environment variables (prefix with TF_VAR_)
+export TF_VAR_db_password="xxx"
+export TF_VAR_jwt_secret="yyy"
+terraform apply
+
+# Option 3: Separate .tfvars file per environment
+terraform apply -var-file="secrets.dev.tfvars"
+```
+
+In GitHub Actions (CI/CD), you'd use repository secrets:
+```yaml
+- run: terraform apply -auto-approve
+  env:
+    TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+    TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
+```
+
+**What Terraform does with these secrets:**
+
+1. `db_username` + `db_password` → passed to the RDS module → creates the PostgreSQL database with these credentials
+2. `db_username` + `db_password` + RDS endpoint → combined into a `DATABASE_URL` connection string → stored in AWS Secrets Manager
+3. `jwt_secret` → stored in AWS Secrets Manager
+4. ECS task starts → ECS agent reads from Secrets Manager → injects as environment variables into your container
+5. Your app reads `process.env.DATABASE_URL` and `process.env.JWT_SECRET` — never knowing they came from Secrets Manager
+
+The flow: `terraform.tfvars` → Terraform → AWS Secrets Manager → ECS agent → container env var → your app
 
 ### Preview Changes
 
@@ -185,12 +255,41 @@ terraform apply
 
 ## Step 6: Run Database Migrations
 
-**What:** Creates tables in the PostgreSQL database and seeds the admin user.
-**Why:** The app container connects to an EMPTY database — no tables exist until you migrate.
-**How:** Run a one-off ECS task that executes `node db/migrate.js && node db/seed.js`.
+### What Are Migrations?
+
+When Terraform creates the RDS database, it creates an EMPTY PostgreSQL server — no tables, no data, nothing. It's like buying a filing cabinet with no folders inside.
+
+**Migrations** are scripts that create the database schema (tables, indexes, constraints). They run in order and track what's already been applied, so you never run the same migration twice.
+
+**Our migration file (`db/migrate.js`) creates:**
+- `branches` table (church branches — name, address, pastor)
+- `users` table (authentication — username, hashed password, role)
+- `members` table (church members — name, phone, branch, department)
+- `migrations` table (tracks which migrations have been applied)
+- Indexes on `members.branch_id` and `users.username` (for query performance)
+
+**Seeding (`db/seed.js`) creates:**
+- One admin user: `admin` / `admin123` with role `main_leader`
+- This is the initial user that can create branches and pastor accounts
+
+### Why Migrations Are Separate from Deployment
+
+In a real company, migrations and code deployment are SEPARATE concerns:
+
+```
+BAD:  Deploy new code → migration runs automatically inside the container on startup
+      Problem: If migration fails, the app crashes. If you have 3 replicas, all 3 try
+      to migrate simultaneously (race condition). Rollback is complex.
+
+GOOD: Run migration FIRST (separate task) → THEN deploy new code
+      Benefit: Migration runs once. If it fails, app isn't affected (old code still works).
+      Migrations should be backward-compatible (new schema works with old AND new code).
+```
+
+### How We Run Migrations (One-Off ECS Task)
 
 ```bash
-# Get network config (subnet + security group)
+# Get network configuration
 SUBNET=$(aws ec2 describe-subnets \
   --filters "Name=tag:Name,Values=church-cms-dev-public-1" \
   --query 'Subnets[0].SubnetId' --output text)
@@ -199,7 +298,7 @@ SG=$(aws ec2 describe-security-groups \
   --filters "Name=tag:Name,Values=church-cms-dev-ecs-sg" \
   --query 'SecurityGroups[0].GroupId' --output text)
 
-# Run migrations
+# Run migrations + seed as a one-off task
 aws ecs run-task \
   --cluster church-cms-dev-cluster \
   --task-definition church-cms-dev \
@@ -208,13 +307,82 @@ aws ecs run-task \
   --overrides '{"containerOverrides":[{"name":"church-cms-app","command":["sh","-c","node db/migrate.js && node db/seed.js"]}]}'
 ```
 
-**Verify migrations ran:**
+**What this does:**
+1. Launches a NEW container using the same image + secrets as the running app
+2. Overrides the startup command (instead of `node server.js`, runs the migration scripts)
+3. Migration script connects to RDS using the same `DATABASE_URL` from Secrets Manager
+4. Creates tables, seeds admin user
+5. Container exits (it's a one-shot task, not a long-running service)
+
+### Verify Migrations Ran Successfully
+
 ```bash
+# Check the task logs
 aws logs tail /ecs/church-cms-dev --since 5m
-# Should show: "Running migration: 001_create_tables"
-#              "All migrations complete."
-#              "Admin user created successfully"
+
+# Expected output:
+# Running migration: 001_create_tables
+# Completed: 001_create_tables
+# All migrations complete.
+# Admin user created successfully
 ```
+
+If you see `Skipped (already applied): 001_create_tables` — migrations already ran. That's fine.
+
+### Alternative Approaches to Migrations
+
+| Approach | How | Pros | Cons |
+|----------|-----|------|------|
+| **One-off ECS task (our choice)** | `aws ecs run-task --overrides` | Uses same image + secrets, no extra infra, runs in the same network | Manual command, need to remember after each deploy |
+| **Init container (Kubernetes)** | Container that runs before the app starts | Automatic, no manual step | Not available on ECS Fargate (K8s only) |
+| **Startup migration (on app boot)** | `require('./db/migrate')` at top of server.js | Fully automatic | Race conditions with multiple replicas, app crashes if migration fails |
+| **CI/CD pipeline step** | GitHub Actions runs migration before deploy | Automated, centralized | CI needs network access to RDS (requires VPN or bastion) |
+| **Bastion host / jump box** | SSH into a server in the VPC, run migration from there | Direct database access | Extra infrastructure to maintain, security risk |
+| **AWS Lambda** | Lambda function triggered during deploy | Serverless, event-driven | Cold starts, execution time limits (15 min max) |
+| **ECS Exec (interactive)** | `aws ecs execute-command` into running container | Can run any command interactively | Requires SSM agent, task must be running |
+
+### The Best Practice (Production)
+
+In production, the recommended approach is:
+
+1. **Migrations run in CI/CD pipeline** (deploy-staging.yml already has a `migration-check` step)
+2. **Before deploying new code**, a step runs `node db/migrate.js` via ECS run-task or ECS Exec
+3. **Migrations are backward-compatible** — new columns are nullable, old columns aren't removed until the NEXT release
+4. **Never seed in production** — seed is for dev/staging only. Production users are created through the app UI.
+
+### ECS Exec Alternative (Interactive Shell)
+
+If you need to run commands interactively inside a running container:
+
+```bash
+# Enable ECS Exec on the service (one-time)
+aws ecs update-service --cluster church-cms-dev-cluster \
+  --service church-cms-dev-service \
+  --enable-execute-command
+
+# Force a new deployment (picks up the exec config)
+aws ecs update-service --cluster church-cms-dev-cluster \
+  --service church-cms-dev-service \
+  --force-new-deployment
+
+# Wait for the new task to be running, then:
+TASK_ARN=$(aws ecs list-tasks --cluster church-cms-dev-cluster \
+  --service-name church-cms-dev-service --query 'taskArns[0]' --output text)
+
+aws ecs execute-command --cluster church-cms-dev-cluster \
+  --task $TASK_ARN --container church-cms-app \
+  --interactive --command "/bin/sh"
+
+# Now you're INSIDE the container:
+$ node db/migrate.js
+$ node db/seed.js
+```
+
+**Trade-offs:**
+- Requires the SSM agent (included in Amazon Linux, works in Alpine with some config)
+- Only works on a RUNNING task (can't exec into a task that already crashed)
+- Leaves no audit trail (one-off ECS tasks are logged, exec sessions aren't by default)
+- Useful for debugging, risky for production operations
 
 ---
 
