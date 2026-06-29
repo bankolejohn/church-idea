@@ -1,5 +1,14 @@
 # Church Management System — DevOps Engineering Portfolio
 
+![CI](https://github.com/bankolejohn/church-idea/actions/workflows/ci.yml/badge.svg)
+![Security](https://github.com/bankolejohn/church-idea/actions/workflows/security-supply-chain.yml/badge.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Terraform](https://img.shields.io/badge/IaC-Terraform-7B42BC?logo=terraform)
+![AWS](https://img.shields.io/badge/Cloud-AWS-FF9900?logo=amazonaws)
+![Docker](https://img.shields.io/badge/Container-Docker-2496ED?logo=docker)
+![Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-326CE5?logo=kubernetes)
+![Prometheus](https://img.shields.io/badge/Monitoring-Prometheus-E6522C?logo=prometheus)
+
 A production-grade church membership management application used as a vehicle to demonstrate senior DevOps/SRE engineering practices. The application itself is simple — the infrastructure, deployment pipeline, observability, and security practices are what matter.
 
 **Live:** https://app.johndesiventures.website
@@ -22,27 +31,122 @@ A production-grade church membership management application used as a vehicle to
 
 ## Architecture
 
+### Infrastructure (AWS)
+
+```mermaid
+graph TB
+    subgraph Internet
+        User[Users/Browser]
+        Bot[Bots/Scanners]
+    end
+
+    subgraph AWS["AWS (us-east-1)"]
+        subgraph VPC["VPC (10.2.0.0/16)"]
+            subgraph Public["Public Subnets"]
+                ALB[ALB<br/>HTTPS TLS 1.3<br/>Port 443]
+            end
+            subgraph Private["Private Subnets"]
+                ECS1[ECS Task 1<br/>Node.js App]
+                ECS2[ECS Task 2<br/>Node.js App]
+                RDS[(RDS PostgreSQL<br/>Multi-AZ<br/>Encrypted)]
+            end
+            NAT[NAT Gateway]
+        end
+        ACM[ACM Certificate]
+        SM[Secrets Manager<br/>DATABASE_URL<br/>JWT_SECRET]
+        CW[CloudWatch<br/>Logs + Metrics]
+        GHCR[GHCR<br/>Container Registry]
+    end
+
+    User -->|HTTPS| ALB
+    Bot -->|HTTPS| ALB
+    ALB -->|Health Check /health| ECS1
+    ALB -->|Load Balance| ECS2
+    ECS1 -->|Port 5432| RDS
+    ECS2 -->|Port 5432| RDS
+    ECS1 -.->|Read Secrets| SM
+    ECS2 -.->|Read Secrets| SM
+    ECS1 -.->|Logs| CW
+    ECS2 -.->|Logs| CW
+    Private -->|Internet via| NAT
+    ALB -.->|TLS Cert| ACM
 ```
-                    ┌─────────────────────────────────────┐
-                    │          GitHub Actions              │
-                    │  CI → Build → Test → Scan → Deploy  │
-                    └──────────────┬──────────────────────┘
-                                   │
-                    ┌──────────────┴──────────────────────┐
-                    │              AWS (us-east-1)         │
-                    │                                      │
-                    │  ┌─── VPC ────────────────────────┐ │
-                    │  │                                 │ │
-                    │  │  ALB (HTTPS, TLS 1.3)          │ │
-                    │  │       │                        │ │
-                    │  │  ECS Fargate (2 tasks)         │ │
-                    │  │       │                        │ │
-                    │  │  RDS PostgreSQL (Multi-AZ)     │ │
-                    │  │                                 │ │
-                    │  └─────────────────────────────────┘ │
-                    │                                      │
-                    │  Secrets Manager │ CloudWatch │ ACM  │
-                    └──────────────────────────────────────┘
+
+### CI/CD Pipeline
+
+```mermaid
+graph LR
+    subgraph Developer
+        Code[Push Code]
+    end
+
+    subgraph CI["CI Pipeline (GitHub Actions)"]
+        Lint[Lint + Test]
+        Build[Build Image]
+        Scan[Security Scan]
+        Sign[Cosign Sign]
+        SBOM[Generate SBOM]
+    end
+
+    subgraph Deploy
+        Staging[Deploy Staging<br/>Auto]
+        Tests[Integration +<br/>E2E Tests]
+        Prod[Deploy Production<br/>Manual Trigger]
+    end
+
+    subgraph AWS
+        ECS_S[ECS Staging]
+        ECS_P[ECS Production]
+    end
+
+    Code --> Lint --> Build --> Scan --> Sign --> SBOM
+    SBOM --> Staging --> Tests
+    Tests -->|Verified| Prod
+    Staging --> ECS_S
+    Prod --> ECS_P
+
+    style Prod fill:#ff9800,color:#000
+    style Tests fill:#4caf50,color:#fff
+```
+
+### Observability Stack (Local)
+
+```mermaid
+graph TB
+    subgraph App["Application (Port 3000)"]
+        OTel[OpenTelemetry SDK]
+        Metrics[/metrics endpoint]
+        Logs[Structured JSON Logs]
+    end
+
+    subgraph Monitoring["Monitoring Stack"]
+        Prom[Prometheus<br/>:9090]
+        Grafana[Grafana<br/>:3001]
+        Loki[Loki<br/>:3100]
+        Jaeger[Jaeger<br/>:16686]
+        AM[Alertmanager<br/>:9093]
+        PT[Promtail]
+    end
+
+    subgraph Dashboards["Grafana Dashboards"]
+        D1[Application Overview]
+        D2[Infrastructure]
+        D3[Business KPIs]
+        D4[SLO & Error Budget]
+    end
+
+    Metrics -->|Scrape /metrics| Prom
+    OTel -->|OTLP traces| Jaeger
+    Logs -->|stdout| PT -->|Push| Loki
+    Prom -->|Alert rules| AM
+    Prom --> Grafana
+    Loki --> Grafana
+    Jaeger --> Grafana
+    Grafana --> D1
+    Grafana --> D2
+    Grafana --> D3
+    Grafana --> D4
+    AM -->|Slack| Slack[Slack Channels]
 ```
 
 ---
