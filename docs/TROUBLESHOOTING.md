@@ -691,3 +691,88 @@ After deploying with Terraform, you need TWO DNS records in Namecheap:
 The first proves domain ownership (required for HTTPS). The second routes actual user traffic.
 
 ---
+
+## Issue #8: Cannot Destroy Production — RDS Deletion Protection
+
+**Date:** June 29, 2026  
+**Environment:** AWS Production  
+**Severity:** Not a bug — this is a FEATURE working correctly
+
+### Symptoms
+
+Running `terraform destroy` on the production environment fails with:
+
+```
+Error: deleting RDS DB Instance (church-cms-prod-db): InvalidParameterCombination:
+Cannot delete protected DB Instance, please disable deletion protection and try again.
+status code: 400
+```
+
+### Why This Happens
+
+This is **deletion protection** — a safety mechanism configured in our RDS module for production:
+
+```hcl
+# In modules/rds/main.tf:
+deletion_protection = var.environment == "prod"
+```
+
+It's set to `true` ONLY for production (dev and staging can be destroyed freely). This prevents:
+- Accidental `terraform destroy` wiping the production database
+- A junior engineer running destroy in the wrong directory
+- Automation bugs that might trigger a destroy
+- Social engineering attacks ("hey, can you run this command for me?")
+
+### Resolution (When You Actually Need to Destroy Production)
+
+```bash
+# Step 1: Explicitly disable deletion protection (manual safety gate)
+aws rds modify-db-instance \
+  --db-instance-identifier church-cms-prod-db \
+  --no-deletion-protection \
+  --apply-immediately
+
+# Step 2: Wait for the modification to apply
+sleep 30
+
+# Step 3: Verify protection is disabled
+aws rds describe-db-instances \
+  --db-instance-identifier church-cms-prod-db \
+  --query 'DBInstances[0].DeletionProtection'
+# Should return: false
+
+# Step 4: Now destroy will work
+terraform destroy
+```
+
+### Why This Matters in a Real Company
+
+In production environments at real companies:
+1. `terraform destroy` for production is NEVER run by a single person
+2. Deletion protection requires a manual AWS CLI/Console step to disable — this is intentional friction
+3. The process typically requires:
+   - A change request ticket (ServiceNow, Jira)
+   - Manager or VP approval
+   - Scheduled maintenance window
+   - Data backup verified before proceeding
+   - Two-person rule (one disables protection, another runs destroy)
+4. Most companies also have IAM policies that PREVENT the `rds:ModifyDBInstance` action for most users — only a "break-glass" admin role can disable protection
+
+### The Defense-in-Depth Layers
+
+```
+Layer 1: terraform destroy requires typing 'yes' manually
+Layer 2: Production RDS has deletion_protection = true (Terraform level)
+Layer 3: AWS rejects the delete API call (AWS level)
+Layer 4: Disabling protection requires a SEPARATE aws rds modify command
+Layer 5: In real companies, IAM prevents most users from running that command
+Layer 6: Final snapshot is required before deletion (data preserved)
+```
+
+Even if all automation breaks and someone runs `terraform destroy` accidentally, the database survives. That's what "production-grade" means.
+
+### Lesson Learned
+
+The error message `Cannot delete protected DB Instance` isn't a failure — it's your infrastructure doing exactly what it's designed to do: protecting production data from accidental deletion. The friction is intentional. Every step you have to take to override it is a moment to think "am I sure?"
+
+---
