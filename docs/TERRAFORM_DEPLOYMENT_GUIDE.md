@@ -694,10 +694,109 @@ AWS Secrets Manager:
 | Decision | Why |
 |----------|-----|
 | NAT Gateway disabled in dev | Saves $32/month. Tasks get public IPs instead. |
+| NAT Gateway ENABLED in staging | Mirrors production. Tasks in private subnets (more secure). |
 | ECS tasks in public subnets (dev only) | Required when no NAT. Production uses private subnets + NAT. |
 | ACM certificate with DNS validation | Free, auto-renews, no manual cert management. |
 | Secrets in AWS Secrets Manager | Encrypted, audited, IAM-controlled. Never in env vars or code. |
 | RDS in private subnets | Database unreachable from internet. Only ECS tasks can connect. |
 | Circuit breaker enabled on ECS | Auto-rollback if new container keeps crashing. |
-| db.t3.micro (dev) | Cheapest option. Production uses db.t3.small with Multi-AZ. |
-| Provider version pinned to 5.31.0 | Avoids downloading 400MB+ on every init. Reproducible builds. |
+| db.t3.micro (dev) / db.t3.small (staging) | Right-size per environment. Production uses .small with Multi-AZ. |
+| Provider version pinned to 5.30.0 | Avoids downloading 400MB+ on every init. Reproducible builds. |
+| Separate VPC per environment | Complete network isolation. Dev can't accidentally affect staging. |
+| 1 task (dev) / 2 tasks (staging) | Dev is cheap. Staging proves HA and load balancing work. |
+
+---
+
+## Deploying Staging (Differences from Dev)
+
+### How Staging Differs
+
+| Aspect | Dev | Staging |
+|--------|-----|---------|
+| VPC CIDR | 10.0.0.0/16 | 10.1.0.0/16 |
+| NAT Gateway | Disabled ($0) | Enabled ($32/month) |
+| ECS tasks in | Public subnets | Private subnets |
+| Public IP on tasks | Yes | No (uses NAT) |
+| ECS task count | 1 | 2 |
+| CPU / Memory | 256 / 512 | 512 / 1024 |
+| RDS instance | db.t3.micro | db.t3.small |
+| Backup retention | 3 days | 7 days |
+| Log retention | 7 days | 14 days |
+| HTTPS | Yes (ACM cert) | No (HTTP only — optional to add) |
+| Estimated cost | ~$41/month | ~$120/month |
+
+### Staging Deploy Steps
+
+```bash
+# 1. Navigate to staging
+cd infrastructure/terraform/environments/staging
+
+# 2. Create secrets (DIFFERENT values from dev — never reuse!)
+cat > terraform.tfvars << EOF
+db_username = "churchadmin"
+db_password = "$(openssl rand -base64 24)"
+jwt_secret  = "$(openssl rand -hex 32)"
+EOF
+
+# 3. Initialize
+terraform init -plugin-dir=/Users/YOUR_USERNAME/.terraform.d/plugins
+
+# 4. Preview
+terraform plan
+# Expected: Plan: ~40 to add (more than dev because NAT Gateway adds resources)
+
+# 5. Deploy
+terraform apply
+# Takes ~10 minutes (NAT Gateway + RDS are slowest)
+# Should succeed fully (no HTTPS = no ACM validation needed)
+
+# 6. Get ALB DNS name
+terraform output alb_dns_name
+# http://church-cms-staging-alb-XXXXXXX.us-east-1.elb.amazonaws.com
+```
+
+### Run Migrations on Staging
+
+**IMPORTANT:** Staging uses PRIVATE subnets, so the migration command is different from dev:
+
+```bash
+# Get PRIVATE subnet and security group
+SUBNET=$(aws ec2 describe-subnets \
+  --filters "Name=tag:Name,Values=church-cms-staging-private-1" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+SG=$(aws ec2 describe-security-groups \
+  --filters "Name=tag:Name,Values=church-cms-staging-ecs-sg" \
+  --query 'SecurityGroups[0].GroupId' --output text)
+
+# Run migrations (NOTE: assignPublicIp=DISABLED — uses NAT for internet)
+aws ecs run-task \
+  --cluster church-cms-staging-cluster \
+  --task-definition church-cms-staging \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+  --overrides '{"containerOverrides":[{"name":"church-cms-app","command":["sh","-c","node db/migrate.js && node db/seed.js"]}]}'
+```
+
+**Why `assignPublicIp=DISABLED` for staging but `ENABLED` for dev?**
+- Dev: tasks are in PUBLIC subnets (no NAT) → need public IP to pull images from GHCR
+- Staging: tasks are in PRIVATE subnets (have NAT) → NAT provides internet access, no public IP needed
+
+### Verify Staging
+
+```bash
+ALB=$(terraform output -raw alb_dns_name | sed 's|http://||')
+
+curl -s http://$ALB/health
+# {"status":"ok","timestamp":"...","uptime":...}
+
+curl -s http://$ALB/ready
+# {"status":"ready","database":"connected"}
+
+curl -s -X POST http://$ALB/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+# {"token":"eyJ...","user":{...}}
+```
+
+---

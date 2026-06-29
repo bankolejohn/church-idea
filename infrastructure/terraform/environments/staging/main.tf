@@ -10,18 +10,18 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "5.30.0"
     }
   }
 
   # Remote state
-  # backend "s3" {
-  #   bucket         = "church-cms-terraform-state"
-  #   key            = "staging/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   dynamodb_table = "terraform-locks"
-  #   encrypt        = true
-  # }
+  backend "s3" {
+    bucket         = "church-cms-terraform-state-529088294210"
+    key            = "staging/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "church-cms-terraform-locks"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
