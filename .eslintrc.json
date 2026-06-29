@@ -18,5 +18,5 @@
     "prefer-const": "warn",
     "no-var": "error"
   },
-  "ignorePatterns": ["node_modules/", "coverage/", "public/"]
+  "ignorePatterns": ["node_modules/", "coverage/", "public/", "load-testing/"]
 }

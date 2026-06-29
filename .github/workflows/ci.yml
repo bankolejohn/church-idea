@@ -29,7 +29,7 @@ jobs:
       - run: npm ci
 
       - name: Run ESLint
-        run: npm run lint
+        run: ESLINT_USE_FLAT_CONFIG=false npm run lint
 
       - name: Check commit messages
         if: github.event_name == 'pull_request'
