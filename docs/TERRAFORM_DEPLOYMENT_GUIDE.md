@@ -707,7 +707,67 @@ AWS Secrets Manager:
 
 ---
 
-## Deploying Staging (Differences from Dev)
+## How Multi-Environment Works (Dev / Staging / Production)
+
+### The Concept
+
+All three environments run **simultaneously** on AWS. They are completely independent — different VPCs, different databases, different load balancers. They share NOTHING except the same AWS account and the same Terraform module code.
+
+```
+infrastructure/terraform/environments/
+├── dev/      → terraform apply → VPC 10.0.0.0/16, own ALB, own RDS, own ECS
+├── staging/  → terraform apply → VPC 10.1.0.0/16, own ALB, own RDS, own ECS
+└── prod/     → terraform apply → VPC 10.2.0.0/16, own ALB, own RDS, own ECS
+```
+
+Think of modules as BLUEPRINTS. Each environment is a different HOUSE built from the same blueprint — different sizes, different security levels, different costs.
+
+### How Each Environment Gets Created
+
+You run `terraform apply` in each folder independently. Each has its own:
+- `main.tf` — wires modules together with environment-specific parameters
+- `variables.tf` — declares inputs (same across environments)
+- `terraform.tfvars` — holds secrets (DIFFERENT per environment, never committed)
+- State file — stored in S3 under a different key (`dev/terraform.tfstate`, `staging/terraform.tfstate`, `prod/terraform.tfstate`)
+
+### The Lifecycle in a Real Company
+
+| Phase | Who Runs It | How |
+|-------|-------------|-----|
+| Initial creation (Day 1) | Senior DevOps engineer | Manual `terraform apply` in each folder |
+| Ongoing infra changes | CI/CD pipeline | PR → plan shown in PR comment → merge → auto-apply |
+| App code deploys | CI/CD pipeline | deploy-staging.yml (auto) / deploy-prod.yml (manual trigger) |
+| Emergency changes | Senior on-call engineer | Manual `terraform apply` with PR approval |
+
+**In production-grade companies, you NEVER run `terraform apply` manually for staging or prod after initial setup.** Instead:
+1. Engineer opens PR changing Terraform files
+2. CI runs `terraform plan` and posts the output as a PR comment
+3. Team reviews the plan (someone eyeballs every resource change)
+4. PR is merged → CI runs `terraform apply` automatically
+5. If something breaks → `git revert` the PR → CI applies the revert
+
+### Cost Reality
+
+| Strategy | When | Monthly Cost |
+|----------|------|-------------|
+| All 3 running 24/7 | Funded startup / company with revenue | ~$361/month |
+| Dev + staging, destroy when not testing | Learning / pre-revenue | ~$41-120/month |
+| Dev only, staging on-demand | Solo developer / tight budget | ~$41/month |
+
+### Environment Isolation (Why Separate VPCs)
+
+Each environment has its own VPC with a different CIDR range:
+- Dev: `10.0.0.0/16`
+- Staging: `10.1.0.0/16`
+- Prod: `10.2.0.0/16`
+
+This means:
+- A bug in dev CANNOT affect production (different networks)
+- A security group misconfiguration in staging doesn't expose prod
+- You can destroy dev without touching staging or prod
+- Each has its own Terraform state — `terraform destroy` in dev/ only destroys dev
+
+---
 
 ### How Staging Differs
 
@@ -798,5 +858,275 @@ curl -s -X POST http://$ALB/api/login \
   -d '{"username":"admin","password":"admin123"}'
 # {"token":"eyJ...","user":{...}}
 ```
+
+---
+
+## Deploying Production
+
+### How Production Differs from Dev/Staging
+
+| Aspect | Dev | Staging | Production |
+|--------|-----|---------|------------|
+| VPC CIDR | 10.0.0.0/16 | 10.1.0.0/16 | 10.2.0.0/16 |
+| NAT Gateway | Disabled ($0) | Enabled ($32) | Enabled ($32) |
+| ECS tasks in | Public subnets | Private subnets | Private subnets |
+| ECS task count | 1 | 2 | 2 (scales to 6) |
+| CPU / Memory | 256 / 512 | 512 / 1024 | 512 / 1024 |
+| RDS instance | db.t3.micro | db.t3.small | db.t3.small |
+| RDS Multi-AZ | No | No | **Yes** (auto failover) |
+| Backup retention | 3 days | 7 days | **30 days** |
+| Log retention | 7 days | 14 days | **90 days** |
+| HTTPS | Yes | No | **Yes** |
+| Deletion protection (RDS) | No | No | **Yes** |
+| Performance Insights | No | No | **Yes** |
+| Estimated cost | ~$41/month | ~$120/month | ~$200/month |
+
+### Production-Specific Features
+
+1. **Multi-AZ RDS:** Database has a standby replica in a different AZ. If the primary AZ fails, AWS automatically promotes the standby (<60s failover).
+2. **HTTPS with ACM:** All traffic encrypted in transit (TLS 1.3).
+3. **Deletion protection:** Cannot accidentally destroy the database via `terraform destroy` or AWS console.
+4. **90-day log retention:** For compliance and post-incident analysis.
+5. **30-day backups:** Point-in-time recovery to any second in the last 30 days.
+6. **Auto-scaling to 6 tasks:** Handles traffic spikes without manual intervention.
+
+### Production Deploy Steps
+
+```bash
+# 1. Navigate to production
+cd infrastructure/terraform/environments/prod
+
+# 2. Create secrets (UNIQUE to production — never reuse from dev/staging!)
+cat > terraform.tfvars << EOF
+db_username = "churchadmin"
+db_password = "$(openssl rand -base64 32)"
+jwt_secret  = "$(openssl rand -hex 64)"
+EOF
+# NOTE: Production uses LONGER passwords (32 chars) and secrets (128 hex chars)
+
+# 3. Initialize
+terraform init -plugin-dir=/Users/YOUR_USERNAME/.terraform.d/plugins
+
+# 4. Preview
+terraform plan
+# Expected: Plan: 39 to add (more than staging — Multi-AZ + ACM + Performance Insights)
+
+# 5. Deploy (first run — partial failure expected for ACM cert)
+terraform apply
+```
+
+### Validate ACM Certificate
+
+```bash
+# Get the DNS validation record
+terraform output certificate_validation
+```
+
+**In Namecheap:**
+
+| Type | Host | Target |
+|------|------|--------|
+| CNAME | `_xxxxx.app` | `_yyyyy.acm-validations.aws.` |
+
+Wait 2-5 minutes, verify:
+```bash
+aws acm describe-certificate \
+  --certificate-arn $(aws acm list-certificates --query "CertificateSummaryList[?DomainName=='app.johndesiventures.website'].CertificateArn" --output text) \
+  --query 'Certificate.Status' --output text
+# Wait until: ISSUED
+```
+
+Then complete:
+```bash
+terraform apply
+```
+
+### Run Migrations on Production
+
+```bash
+SUBNET=$(aws ec2 describe-subnets \
+  --filters "Name=tag:Name,Values=church-cms-prod-private-1" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+SG=$(aws ec2 describe-security-groups \
+  --filters "Name=tag:Name,Values=church-cms-prod-ecs-sg" \
+  --query 'SecurityGroups[0].GroupId' --output text)
+
+aws ecs run-task \
+  --cluster church-cms-prod-cluster \
+  --task-definition church-cms-prod \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+  --overrides '{"containerOverrides":[{"name":"church-cms-app","command":["sh","-c","node db/migrate.js && node db/seed.js"]}]}'
+```
+
+**IMPORTANT:** In a real company, NEVER seed in production. The seed creates `admin/admin123`. For this learning project it's fine — but production should create admin users through a secure process.
+
+### Configure Domain DNS
+
+```bash
+terraform output alb_raw_dns
+```
+
+In Namecheap:
+
+| Type | Host | Target |
+|------|------|--------|
+| CNAME | `app` | `church-cms-prod-alb-XXXXXXX.us-east-1.elb.amazonaws.com` |
+
+### Verify Production
+
+```bash
+curl -s https://app.johndesiventures.website/health
+curl -s https://app.johndesiventures.website/ready
+curl -s -X POST https://app.johndesiventures.website/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+```
+
+### Production Operations Cheat Sheet
+
+```bash
+# View logs in real-time
+aws logs tail /ecs/church-cms-prod --follow
+
+# Check service health
+aws ecs describe-services --cluster church-cms-prod-cluster \
+  --services church-cms-prod-service \
+  --query 'services[0].{desired:desiredCount,running:runningCount,status:status}'
+
+# Force a new deployment (pulls latest image)
+aws ecs update-service --cluster church-cms-prod-cluster \
+  --service church-cms-prod-service --force-new-deployment
+
+# Scale up for expected traffic
+aws ecs update-service --cluster church-cms-prod-cluster \
+  --service church-cms-prod-service --desired-count 4
+
+# Scale back down
+aws ecs update-service --cluster church-cms-prod-cluster \
+  --service church-cms-prod-service --desired-count 2
+```
+
+---
+
+## All Three Environments — Summary
+
+```
+DEV:        https://churchidea.johndesiventures.website
+            1 task | HTTPS | Public subnet | db.t3.micro | ~$41/month
+
+STAGING:    http://church-cms-staging-alb-XXXXX.us-east-1.elb.amazonaws.com
+            2 tasks | HTTP only | Private subnet + NAT | db.t3.small | ~$120/month
+
+PRODUCTION: https://app.johndesiventures.website
+            2 tasks | HTTPS | Private subnet + NAT | db.t3.small Multi-AZ | ~$200/month
+
+TOTAL COST: ~$361/month (all three running simultaneously)
+```
+
+### Quick Commands Reference
+
+| Task | Dev | Staging | Production |
+|------|-----|---------|------------|
+| Navigate | `cd environments/dev` | `cd environments/staging` | `cd environments/prod` |
+| Deploy infra | `terraform apply` | `terraform apply` | `terraform apply` (with approval) |
+| Migrations | `assignPublicIp=ENABLED` | `assignPublicIp=DISABLED` | `assignPublicIp=DISABLED` |
+| Cluster name | `church-cms-dev-cluster` | `church-cms-staging-cluster` | `church-cms-prod-cluster` |
+| Subnet filter | `church-cms-dev-public-1` | `church-cms-staging-private-1` | `church-cms-prod-private-1` |
+| Destroy safe? | Yes (freely) | Yes (recreate when needed) | **NEVER** (scale instead) |
+
+---
+
+## Production Hands-On Exercises
+
+These exercises simulate real production scenarios. Build confidence by running them.
+
+### Exercise 1: Simulate a Traffic Spike (Scale Up/Down)
+
+```bash
+# Scale to 4 tasks (preparing for high traffic)
+aws ecs update-service --cluster church-cms-prod-cluster \
+  --service church-cms-prod-service --desired-count 4
+
+# Watch tasks come up (Ctrl+C to stop)
+watch -n 5 'aws ecs describe-services --cluster church-cms-prod-cluster \
+  --services church-cms-prod-service \
+  --query "services[0].{desired:desiredCount,running:runningCount}" --output table'
+
+# Scale back down
+aws ecs update-service --cluster church-cms-prod-cluster \
+  --service church-cms-prod-service --desired-count 2
+```
+
+### Exercise 2: Deploy a New Version (Rolling Update)
+
+```bash
+# Force ECS to pull latest image and roll out new tasks
+aws ecs update-service --cluster church-cms-prod-cluster \
+  --service church-cms-prod-service --force-new-deployment
+
+# Watch the rolling update
+aws ecs describe-services --cluster church-cms-prod-cluster \
+  --services church-cms-prod-service \
+  --query 'services[0].deployments[*].{status:status,desired:desiredCount,running:runningCount}' \
+  --output table
+```
+
+### Exercise 3: View Logs During an Issue
+
+```bash
+# Follow logs in real-time (terminal 1)
+aws logs tail /ecs/church-cms-prod --follow
+
+# In terminal 2, generate a failed login:
+curl -s -X POST https://app.johndesiventures.website/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"attacker","password":"wrong"}'
+
+# Watch "Failed login attempt" appear in terminal 1
+```
+
+### Exercise 4: Check What's Exposed (Security Audit)
+
+```bash
+# Is RDS publicly accessible? (should be: false)
+aws rds describe-db-instances \
+  --db-instance-identifier church-cms-prod-db \
+  --query 'DBInstances[0].PubliclyAccessible'
+
+# What ports are open on the ALB security group?
+aws ec2 describe-security-groups \
+  --filters "Name=tag:Name,Values=church-cms-prod-alb-sg" \
+  --query 'SecurityGroups[0].IpPermissions[*].{Port:FromPort,Source:IpRanges[0].CidrIp}'
+
+# What can the ECS tasks access?
+aws ec2 describe-security-groups \
+  --filters "Name=tag:Name,Values=church-cms-prod-ecs-sg" \
+  --query 'SecurityGroups[0].{Ingress:IpPermissions,Egress:IpPermissionsEgress}'
+```
+
+### Exercise 5: Test Database Failover (Multi-AZ)
+
+```bash
+# Check current AZ of the primary
+aws rds describe-db-instances \
+  --db-instance-identifier church-cms-prod-db \
+  --query 'DBInstances[0].{AZ:AvailabilityZone,MultiAZ:MultiAZ,Status:DBInstanceStatus}'
+
+# Trigger a failover (simulates AZ failure — causes ~30s downtime)
+# WARNING: Only do this if you understand it causes brief interruption
+aws rds reboot-db-instance \
+  --db-instance-identifier church-cms-prod-db \
+  --force-failover
+
+# Watch the app recover (hit /ready repeatedly)
+for i in $(seq 1 20); do
+  echo "$(date): $(curl -s https://app.johndesiventures.website/ready | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status","ERROR"))' 2>/dev/null || echo 'UNREACHABLE')"
+  sleep 5
+done
+```
+
+This shows you: the database failover takes ~30 seconds, during which `/ready` returns 503 or fails. After failover, it recovers automatically. The app itself (container) never restarts — only the DB connection reconnects.
 
 ---

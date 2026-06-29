@@ -10,18 +10,18 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "5.30.0"
     }
   }
 
   # Remote state
-  # backend "s3" {
-  #   bucket         = "church-cms-terraform-state"
-  #   key            = "prod/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   dynamodb_table = "terraform-locks"
-  #   encrypt        = true
-  # }
+  backend "s3" {
+    bucket         = "church-cms-terraform-state-529088294210"
+    key            = "prod/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "church-cms-terraform-locks"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
@@ -45,7 +45,7 @@ module "vpc" {
   project_name       = var.project_name
   environment        = var.environment
   vpc_cidr           = "10.2.0.0/16"
-  az_count           = 3
+  az_count           = 2  # Using 2 AZs (sufficient for HA, saves cost on NAT)
   enable_nat_gateway = true
 }
 
@@ -62,6 +62,23 @@ module "secrets" {
 }
 
 # ─────────────────────────────────────────────
+# SSL Certificate (ACM)
+# ─────────────────────────────────────────────
+resource "aws_acm_certificate" "app" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+
+  tags = {
+    Name        = "${var.project_name}-${var.environment}-cert"
+    Environment = var.environment
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# ─────────────────────────────────────────────
 # Load Balancer
 # ─────────────────────────────────────────────
 module "alb" {
@@ -72,7 +89,8 @@ module "alb" {
   vpc_id            = module.vpc.vpc_id
   public_subnet_ids = module.vpc.public_subnet_ids
   container_port    = 3000
-  enable_blue_green = true
+  enable_https      = true
+  certificate_arn   = aws_acm_certificate.app.arn
 }
 
 # ─────────────────────────────────────────────
@@ -95,13 +113,14 @@ module "ecs" {
   container_port  = 3000
   cpu             = "512"
   memory          = "1024"
-  desired_count   = 3
-  max_count       = 10
+  desired_count   = 2
+  max_count       = 6
 
   secrets_arns            = module.secrets.all_secret_arns
   database_url_secret_arn = module.secrets.database_url_arn
   jwt_secret_arn          = module.secrets.jwt_secret_arn
 
+  enable_https       = true
   log_retention_days = 90
 }
 
@@ -125,28 +144,4 @@ module "rds" {
   database_password     = var.db_password
   multi_az              = true
   backup_retention_days = 30
-}
-
-# ─────────────────────────────────────────────
-# CodeDeploy (Blue/Green Canary Deployments)
-# ─────────────────────────────────────────────
-module "codedeploy" {
-  source = "../../modules/codedeploy"
-
-  project_name = var.project_name
-  environment  = var.environment
-
-  ecs_cluster_name = module.ecs.cluster_name
-  ecs_service_name = module.ecs.service_name
-
-  alb_arn_suffix               = module.alb.alb_arn_suffix
-  target_group_blue_name       = module.alb.target_group_name
-  target_group_green_name      = module.alb.target_group_green_name
-  target_group_green_arn_suffix = module.alb.target_group_green_arn_suffix
-  listener_arns                = [module.alb.listener_arn]
-
-  # Canary strategy: 10% traffic for 5 minutes, then full shift
-  deployment_config        = "CodeDeployDefault.ECSCanary10Percent5Minutes"
-  termination_wait_minutes = 10
-  auto_proceed             = true
 }

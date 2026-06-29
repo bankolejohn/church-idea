@@ -14,8 +14,15 @@ variable "environment" {
 }
 
 variable "container_image" {
-  description = "Docker image to deploy (tagged release)"
+  description = "Docker image to deploy (should be a pinned version tag, not :latest)"
   type        = string
+  default     = "ghcr.io/bankolejohn/church-idea:latest"
+}
+
+variable "domain_name" {
+  description = "Domain name for the production application"
+  type        = string
+  default     = "app.johndesiventures.website"
 }
 
 variable "db_name" {
