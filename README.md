@@ -113,18 +113,18 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph App["Application (Port 3000)"]
+    subgraph App["Application - Port 3000"]
         OTel[OpenTelemetry SDK]
-        Metrics[/metrics endpoint]
+        Metrics[Metrics Endpoint]
         Logs[Structured JSON Logs]
     end
 
     subgraph Monitoring["Monitoring Stack"]
-        Prom[Prometheus<br/>:9090]
-        Grafana[Grafana<br/>:3001]
-        Loki[Loki<br/>:3100]
-        Jaeger[Jaeger<br/>:16686]
-        AM[Alertmanager<br/>:9093]
+        Prom["Prometheus :9090"]
+        Grafana["Grafana :3001"]
+        Loki["Loki :3100"]
+        Jaeger["Jaeger :16686"]
+        AM["Alertmanager :9093"]
         PT[Promtail]
     end
 
@@ -132,10 +132,10 @@ graph TB
         D1[Application Overview]
         D2[Infrastructure]
         D3[Business KPIs]
-        D4[SLO & Error Budget]
+        D4[SLO and Error Budget]
     end
 
-    Metrics -->|Scrape /metrics| Prom
+    Metrics -->|Scrape| Prom
     OTel -->|OTLP traces| Jaeger
     Logs -->|stdout| PT -->|Push| Loki
     Prom -->|Alert rules| AM
@@ -146,7 +146,7 @@ graph TB
     Grafana --> D2
     Grafana --> D3
     Grafana --> D4
-    AM -->|Slack| Slack[Slack Channels]
+    AM -->|Notify| Slack[Slack Channels]
 ```
 
 ---
