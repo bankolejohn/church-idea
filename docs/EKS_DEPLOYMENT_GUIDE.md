@@ -512,3 +512,209 @@ terraform destroy
 5. **`ENABLE_HTTPS=false`** is critical when serving over HTTP — Helmet.js CSP blocks resources otherwise.
 6. **`openssl rand -hex`** is safer than `-base64` for passwords — no special characters that break services.
 7. **Partial failures are normal** — Terraform apply, fix issues, apply again. Don't panic.
+
+
+---
+
+## Troubleshooting: Terraform Destroy Stuck on VPC
+
+### Issue 8: VPC Has Dependencies — Cannot Delete
+
+**Error:**
+```
+Error: deleting EC2 VPC (vpc-0c78d8963f9f5a6fa): DependencyViolation:
+The vpc has dependencies and cannot be deleted.
+```
+
+**Cause:** When you skip deleting Kubernetes-created resources (NLB, services) BEFORE running `terraform destroy`, the VPC ends up with leftover resources that Terraform didn't create and doesn't know about:
+- Network Load Balancers (created by AWS Load Balancer Controller)
+- Security Groups (created by Kubernetes for service networking)
+- Network Interfaces (ENIs attached to NLBs)
+
+AWS won't delete a VPC until ALL resources inside it are gone.
+
+**How to debug — find what's left in the VPC:**
+
+```bash
+VPC_ID="vpc-XXXXX"  # Replace with your VPC ID from the error
+
+# Check for leftover security groups
+aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'SecurityGroups[?GroupName!=`default`].{ID:GroupId,Name:GroupName}' --output table
+
+# Check for leftover network interfaces
+aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'NetworkInterfaces[*].{ID:NetworkInterfaceId,Status:Status,Description:Description}' --output table
+
+# Check for leftover load balancers
+aws elbv2 describe-load-balancers \
+  --query "LoadBalancers[?VpcId=='$VPC_ID'].{ARN:LoadBalancerArn,Name:LoadBalancerName}" --output table
+```
+
+**How to fix — delete in this order:**
+
+```bash
+# 1. Delete load balancers first (they hold ENIs)
+aws elbv2 delete-load-balancer --load-balancer-arn <arn-from-above>
+sleep 60  # Wait for ENIs to release
+
+# 2. Delete leftover target groups
+aws elbv2 describe-target-groups --query 'TargetGroups[?contains(TargetGroupName, `churchcm`)].TargetGroupArn' --output text | while read ARN; do
+  aws elbv2 delete-target-group --target-group-arn "$ARN"
+done
+
+# 3. Delete leftover ENIs (must be "available" status — not "in-use")
+aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'NetworkInterfaces[?Status==`available`].NetworkInterfaceId' --output text | while read ENI; do
+  aws ec2 delete-network-interface --network-interface-id "$ENI"
+done
+
+# 4. Delete leftover security groups (created by K8s, not Terraform)
+aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | while read SG; do
+  aws ec2 delete-security-group --group-id "$SG"
+done
+
+# 5. Now terraform destroy will work
+terraform destroy
+```
+
+**The correct teardown order (to avoid this entirely):**
+
+```
+1. kubectl delete services (removes NLBs)        ← Most people forget this
+2. helm uninstall (removes K8s deployments)
+3. Wait 60 seconds (AWS releases ENIs)
+4. terraform destroy (removes infra)
+5. Clean up manual IAM roles
+```
+
+**Lesson:** Kubernetes creates AWS resources (load balancers, security groups) that live OUTSIDE Terraform's state. If you destroy the cluster without cleaning these up first, they become orphaned and block VPC deletion. Always delete K8s services before destroying infrastructure.
+
+---
+
+## Karpenter — Intelligent Node Autoscaling
+
+### What Karpenter Is
+
+Karpenter is a Kubernetes node autoscaler built by AWS. It replaces the traditional Cluster Autoscaler with a smarter, faster approach.
+
+### Why Karpenter Exists (Problem with Cluster Autoscaler)
+
+**Traditional Cluster Autoscaler:**
+```
+Pod pending (no capacity) → Check node groups → Increase ASG desired count
+→ ASG launches pre-defined instance type → Node boots → Pod scheduled
+Time: 2-5 minutes
+```
+
+**Problems:**
+- Slow (2-5 minutes per scale event)
+- Wasteful (fixed instance types — if you need 1 CPU, you might get 4)
+- Rigid (must pre-define node groups per instance type)
+
+**Karpenter:**
+```
+Pod pending → Evaluate pod requirements (CPU, memory, arch)
+→ Query Spot pricing → Launch cheapest instance that fits → Pod scheduled
+Time: ~60 seconds
+```
+
+### How Karpenter Works
+
+1. **Watches for unschedulable pods** (pending because no node has capacity)
+2. **Evaluates requirements** (how much CPU/memory does this pod need?)
+3. **Selects the cheapest instance** from a wide range of allowed types
+4. **Prefers Spot instances** (70% cheaper than On-Demand)
+5. **Provisions in ~60 seconds** (vs 2-5 minutes for Cluster Autoscaler)
+6. **Consolidates when underutilized** (moves pods, terminates empty nodes)
+
+### What We Created (But Didn't Activate)
+
+**In Terraform (`modules/eks/karpenter.tf`):**
+- IAM role for Karpenter controller (IRSA — runs as a pod in the cluster)
+- IAM role for Karpenter-provisioned nodes (EC2 instance profile)
+- Permissions to launch/terminate EC2 instances
+
+**In Kubernetes (`kubernetes/karpenter/nodepool.yaml`):**
+- NodePool definition (what instance types are allowed)
+- EC2NodeClass (what AMI, subnets, security groups to use)
+
+### Why We Didn't Activate It
+
+For a 2-node staging cluster, Karpenter is overkill:
+- We already have a managed node group with 2 nodes
+- Traffic is minimal — no scaling needed
+- Adding Karpenter means removing the managed node group (replacing one with the other)
+- The IAM infrastructure is ready — activating it is a one-step Helm install
+
+### How to Activate Karpenter (When Ready)
+
+```bash
+# 1. Install Karpenter via Helm
+helm repo add karpenter https://charts.karpenter.sh
+helm repo update
+
+CLUSTER_ENDPOINT=$(aws eks describe-cluster --name church-cms-staging --query 'cluster.endpoint' --output text)
+KARPENTER_ROLE_ARN=$(aws iam get-role --role-name church-cms-staging-karpenter-controller --query 'Role.Arn' --output text)
+
+helm install karpenter karpenter/karpenter \
+  --namespace karpenter --create-namespace \
+  --set clusterName=church-cms-staging \
+  --set clusterEndpoint=$CLUSTER_ENDPOINT \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$KARPENTER_ROLE_ARN
+
+# 2. Apply the NodePool (defines allowed instance types)
+kubectl apply -f kubernetes/karpenter/nodepool.yaml
+
+# 3. Delete the managed node group (Karpenter replaces it)
+aws eks delete-nodegroup \
+  --cluster-name church-cms-staging \
+  --nodegroup-name church-cms-staging-nodes
+# Karpenter will immediately provision new nodes for the existing pods
+```
+
+### NodePool Configuration Explained
+
+```yaml
+requirements:
+  # Instance categories: compute, general purpose, burstable
+  - key: karpenter.k8s.aws/instance-category
+    operator: In
+    values: ["c", "m", "t"]
+
+  # Sizes: medium to xlarge (avoid tiny instances — K8s overhead needs ~0.5 CPU)
+  - key: karpenter.k8s.aws/instance-size
+    operator: In
+    values: ["medium", "large", "xlarge"]
+
+  # Prefer Spot (70% cheaper), fallback to On-Demand
+  - key: karpenter.sh/capacity-type
+    operator: In
+    values: ["spot", "on-demand"]
+```
+
+**Why wide instance variety:** More types = more Spot availability. If `t3.medium` Spot isn't available, Karpenter tries `c5.medium`, then `m5.medium`, etc. It always picks the cheapest option available RIGHT NOW.
+
+### Consolidation (Cost Saving)
+
+```yaml
+disruption:
+  consolidationPolicy: WhenEmptyOrUnderutilized
+  consolidateAfter: 60s
+```
+
+When traffic drops (e.g., nighttime), Karpenter:
+1. Identifies nodes running below capacity
+2. Checks if pods can fit on fewer nodes
+3. Cordons the underutilized node (no new pods)
+4. Drains pods (moves them to other nodes, respecting PDBs)
+5. Terminates the empty node (stops paying for it)
+
+This is automatic cost optimization — your cluster shrinks at night and grows during the day.
+
+### What to Say in Interviews
+
+"I configured Karpenter with IAM roles and NodePool definitions. The cluster uses a managed node group for simplicity in staging, but Karpenter is ready to activate for production where we need sub-minute scaling and Spot instance diversity for cost optimization. Karpenter can provision the right-sized node in 60 seconds versus 2-5 minutes for Cluster Autoscaler."
+
+---
