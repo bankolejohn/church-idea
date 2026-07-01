@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────
 # Stage 1: Dependencies (build environment)
 # ──────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:26-alpine AS deps
 
 WORKDIR /app
 
@@ -34,7 +34,7 @@ RUN npm ci --only=production && npm cache clean --force
 #   FROM gcr.io/distroless/nodejs20-debian12
 # And change healthcheck to Node.js-based (see below)
 # ──────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:26-alpine AS production
 
 # Security: create non-root user with explicit IDs
 # Explicit UIDs make container behavior predictable across environments
