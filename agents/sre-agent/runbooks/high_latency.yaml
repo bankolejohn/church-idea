@@ -1,0 +1,59 @@
+# Runbook: HighLatency
+# Agent uses this to handle slow response times
+
+alert: HighLatency
+severity: warning
+description: Response time p95 exceeds 2 seconds
+
+diagnostic_steps:
+  - tool: get_cpu_memory_metrics
+    expect: CPU < 70%, Memory < 80%
+    if_fails: "Resource exhaustion — need to scale up"
+
+  - tool: get_ecs_status
+    expect: running_count should match desired
+    note: "If running < desired, capacity reduced"
+
+  - tool: get_rds_status
+    expect: status should be "available"
+    if_fails: "Database issue — may be in maintenance or failover"
+
+  - tool: get_recent_logs
+    filter: "timeout|slow|connection"
+    expect: no timeout errors
+    if_fails: "Database queries timing out — pool may be exhausted"
+
+  - tool: get_alb_health
+    expect: all targets healthy
+    note: "If some unhealthy — traffic concentrated on fewer tasks"
+
+remediation:
+  - condition: "CPU > 70%"
+    action: scale_service
+    params: {desired_count: 4}
+    risk: low
+    auto_fix: true
+    rationale: "Distribute load — more tasks = less CPU per task"
+
+  - condition: "connection timeout in logs"
+    action: restart_service
+    risk: low
+    auto_fix: true
+    rationale: "Reset connection pools — resolves pool exhaustion"
+
+  - condition: "some targets unhealthy"
+    action: restart_service
+    risk: low
+    auto_fix: true
+    rationale: "Replace unhealthy tasks with fresh ones"
+
+escalate_if:
+  - "Latency persists after scaling"
+  - "Root cause is a slow database query (needs index)"
+  - "External dependency is slow"
+  - "Memory leak suspected (gradual increase over time)"
+
+verification:
+  - tool: check_health
+    expect: response time < 1 second
+    wait_seconds: 120

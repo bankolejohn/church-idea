@@ -1,0 +1,62 @@
+# Runbook: HighErrorRate
+# Agent uses this to handle error rate spikes
+
+alert: HighErrorRate
+severity: warning
+description: More than 5% of requests returning 5xx errors
+
+diagnostic_steps:
+  - tool: check_health
+    expect: status should be "healthy"
+    note: "If health fails, this is actually a ServiceDown — escalate"
+
+  - tool: check_ready
+    expect: database should be "connected"
+    if_fails: "Database connectivity issue — likely cause of 5xx errors"
+
+  - tool: get_recent_logs
+    filter: "error|Error|500"
+    expect: identify the specific error pattern
+    note: "Look for: ECONNREFUSED (DB down), TypeError (code bug), ENOMEM (out of memory)"
+
+  - tool: get_ecs_status
+    expect: check if a recent deployment happened
+    note: "If deployment in last 10 minutes — likely bad code"
+
+  - tool: get_cpu_memory_metrics
+    expect: CPU < 80%, Memory < 90%
+    if_fails: "Resource exhaustion — scale up"
+
+remediation:
+  - condition: "recent deployment correlates with error spike"
+    action: restart_service
+    risk: low
+    auto_fix: true
+    rationale: "Force redeploy pulls previous stable image if circuit breaker triggers"
+
+  - condition: "CPU or memory near limits"
+    action: scale_service
+    params: {desired_count: 4}
+    risk: low
+    auto_fix: true
+    rationale: "Distribute load across more tasks"
+
+  - condition: "database connectivity error"
+    action: restart_service
+    risk: low
+    auto_fix: true
+    rationale: "Resets connection pool — resolves stale connections"
+
+escalate_if:
+  - "Error is a code bug (TypeError, ReferenceError)"
+  - "Database instance is in 'failed' state"
+  - "Errors continue after restart"
+  - "Root cause requires code change"
+
+verification:
+  - tool: check_health
+    expect: status == "healthy"
+    wait_seconds: 120
+  - tool: get_recent_logs
+    filter: "error"
+    expect: error count should decrease

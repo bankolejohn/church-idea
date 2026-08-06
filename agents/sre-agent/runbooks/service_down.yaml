@@ -1,0 +1,57 @@
+# Runbook: ServiceDown
+# The agent reads this to know how to handle a ServiceDown alert
+
+alert: ServiceDown
+severity: critical
+description: Application is completely unreachable
+
+diagnostic_steps:
+  - tool: check_health
+    expect: status should be "healthy"
+    if_fails: "App is not responding — check ECS tasks"
+
+  - tool: get_ecs_status
+    expect: running_count should equal desired_count
+    if_fails: "Tasks are not running — check events for crash reason"
+
+  - tool: get_recent_logs
+    filter: "error|Error|FATAL"
+    expect: no critical errors in last 5 minutes
+    if_fails: "Check log messages for crash cause"
+
+  - tool: get_alb_health
+    expect: all targets should be healthy
+    if_fails: "Targets unhealthy — container may be crashing on startup"
+
+remediation:
+  - condition: "tasks crashing (running < desired)"
+    action: restart_service
+    risk: low
+    auto_fix: true
+    rationale: "Rolling restart with circuit breaker — safe, no downtime risk"
+
+  - condition: "no tasks running at all"
+    action: scale_service
+    params: {desired_count: 2}
+    risk: medium
+    auto_fix: true
+    rationale: "Ensure at least 2 tasks are desired"
+
+  - condition: "tasks running but ALB reports unhealthy"
+    action: restart_service
+    risk: low
+    auto_fix: true
+    rationale: "Tasks may be stuck — fresh restart resolves most issues"
+
+escalate_if:
+  - "Fix attempted 3 times without resolution"
+  - "Root cause is security group or IAM related"
+  - "Root cause is database failure"
+  - "Unknown error pattern in logs"
+
+verification:
+  - tool: check_health
+    expect: status == "healthy"
+    wait_seconds: 60
+  - tool: check_ready
+    expect: status == "ready"
