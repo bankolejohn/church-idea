@@ -36,3 +36,4 @@ dist/
 pgdata/
 terraform.tfstate
 *.tfstate*
+agents/sre-agent/.env
