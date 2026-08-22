@@ -551,6 +551,10 @@ app.post('/api/create-pastor', authenticateToken, requireRole(['main_leader']), 
 // Catch-all: Serve frontend
 // ──────────────────────────────────────────────
 
+// Monthly Returns routes
+const monthlyReturnsRoutes = require('./lib/routes/monthly-returns');
+app.use('/api/returns', authenticateToken, monthlyReturnsRoutes);
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });

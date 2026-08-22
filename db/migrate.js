@@ -46,6 +46,57 @@ const migrations = [
             CREATE INDEX IF NOT EXISTS idx_members_branch_id ON members(branch_id);
             CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
         `
+    },
+    {
+        name: '002_monthly_returns',
+        up: `
+            -- Monthly returns: one submission per month per branch
+            CREATE TABLE IF NOT EXISTS monthly_returns (
+                id SERIAL PRIMARY KEY,
+                branch_id INTEGER NOT NULL REFERENCES branches(id),
+                submitted_by INTEGER NOT NULL REFERENCES users(id),
+                month DATE NOT NULL,
+                image_url TEXT,
+                status VARCHAR(20) DEFAULT 'draft' CHECK(status IN ('draft', 'submitted', 'reviewed', 'rejected')),
+                review_notes TEXT,
+                reviewed_by INTEGER REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                submitted_at TIMESTAMP,
+                reviewed_at TIMESTAMP,
+                UNIQUE(branch_id, month)
+            );
+
+            -- Weekly attendance entries (one row per Sunday service)
+            CREATE TABLE IF NOT EXISTS attendance_entries (
+                id SERIAL PRIMARY KEY,
+                return_id INTEGER NOT NULL REFERENCES monthly_returns(id) ON DELETE CASCADE,
+                service_date DATE NOT NULL,
+                men INTEGER DEFAULT 0,
+                women INTEGER DEFAULT 0,
+                youth INTEGER DEFAULT 0,
+                children INTEGER DEFAULT 0,
+                total INTEGER DEFAULT 0
+            );
+
+            -- Weekly income entries (one row per Sunday service)
+            CREATE TABLE IF NOT EXISTS income_entries (
+                id SERIAL PRIMARY KEY,
+                return_id INTEGER NOT NULL REFERENCES monthly_returns(id) ON DELETE CASCADE,
+                service_date DATE NOT NULL,
+                tithe_account DECIMAL(12,2) DEFAULT 0,
+                tithe_offering DECIMAL(12,2) DEFAULT 0,
+                main_account DECIMAL(12,2) DEFAULT 0,
+                sunday_school DECIMAL(12,2) DEFAULT 0,
+                evangelism DECIMAL(12,2) DEFAULT 0,
+                pure_water DECIMAL(12,2) DEFAULT 0,
+                other DECIMAL(12,2) DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_monthly_returns_branch ON monthly_returns(branch_id);
+            CREATE INDEX IF NOT EXISTS idx_monthly_returns_status ON monthly_returns(status);
+            CREATE INDEX IF NOT EXISTS idx_attendance_return ON attendance_entries(return_id);
+            CREATE INDEX IF NOT EXISTS idx_income_return ON income_entries(return_id);
+        `
     }
 ];
 
