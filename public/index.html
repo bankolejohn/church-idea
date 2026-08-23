@@ -60,6 +60,8 @@
                     <button class="nav-btn active" data-page="dashboard">Dashboard</button>
                     <button class="nav-btn" data-page="members">Members</button>
                     <button class="nav-btn" data-page="branches" id="branches-nav">Branches</button>
+                    <button class="nav-btn" data-page="monthly-returns" id="returns-nav" style="display: none;">Monthly Returns</button>
+                    <button class="nav-btn" data-page="review-returns" id="review-nav" style="display: none;">Review Returns</button>
                     <button class="nav-btn" data-page="admin" id="admin-nav" style="display: none;">Admin</button>
                 </nav>
             </header>
@@ -161,7 +163,162 @@
                         </form>
                     </div>
                 </div>
+                <!-- Monthly Returns Page (Branch Pastors) -->
+                <div class="page" id="monthly-returns">
+                    <div class="page-header">
+                        <h2>Monthly Returns</h2>
+                    </div>
+
+                    <!-- Upload Section -->
+                    <div class="returns-upload-section" id="returns-upload-section">
+                        <div class="upload-area" id="upload-area">
+                            <div class="upload-icon">📷</div>
+                            <h3>Upload Monthly Returns Sheet</h3>
+                            <p>Take a photo or select an image of your handwritten returns form</p>
+                            <div class="upload-buttons">
+                                <label class="btn-primary upload-btn">
+                                    <input type="file" id="returns-image-input" accept="image/*" capture="environment" style="display:none;">
+                                    📸 Take Photo
+                                </label>
+                                <label class="btn-secondary upload-btn">
+                                    <input type="file" id="returns-file-input" accept="image/*" style="display:none;">
+                                    📁 Choose File
+                                </label>
+                            </div>
+                        </div>
+                        <div class="upload-preview" id="upload-preview" style="display:none;">
+                            <img id="preview-image" alt="Uploaded returns sheet">
+                            <button class="btn-secondary" id="change-image-btn">Change Image</button>
+                        </div>
+                        <div class="extraction-loading" id="extraction-loading" style="display:none;">
+                            <div class="spinner"></div>
+                            <p>AI is reading your handwritten form...</p>
+                            <p class="loading-sub">This usually takes 5-10 seconds</p>
+                        </div>
+                    </div>
+
+                    <!-- Extracted Data Section (hidden until extraction complete) -->
+                    <div class="returns-data-section" id="returns-data-section" style="display:none;">
+                        <div class="returns-header-info">
+                            <div class="returns-meta">
+                                <span class="returns-church" id="returns-church-name"></span>
+                                <span class="returns-month" id="returns-month"></span>
+                            </div>
+                            <button class="btn-secondary" id="view-original-btn">🖼️ View Original Image</button>
+                        </div>
+
+                        <div class="returns-notice">
+                            <p>⚠️ Please review the extracted data below. Values highlighted in <span class="highlight-example">yellow</span> may need correction.</p>
+                        </div>
+
+                        <!-- Attendance Table -->
+                        <div class="returns-table-section">
+                            <h3>📊 Attendance</h3>
+                            <div class="table-responsive">
+                                <table class="returns-table" id="attendance-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Men</th>
+                                            <th>Women</th>
+                                            <th>Youth</th>
+                                            <th>Children</th>
+                                            <th>Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="attendance-tbody"></tbody>
+                                    <tfoot id="attendance-tfoot"></tfoot>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Income Table -->
+                        <div class="returns-table-section">
+                            <h3>💰 Income</h3>
+                            <div class="table-responsive">
+                                <table class="returns-table" id="income-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Tithe A/C</th>
+                                            <th>Tithe Off.</th>
+                                            <th>Main A/C</th>
+                                            <th>S. School</th>
+                                            <th>Evangelism</th>
+                                            <th>P. Water</th>
+                                            <th>Other</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="income-tbody"></tbody>
+                                    <tfoot id="income-tfoot"></tfoot>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="returns-actions">
+                            <button class="btn-secondary" id="save-draft-btn">💾 Save as Draft</button>
+                            <button class="btn-primary" id="submit-returns-btn">📤 Submit to G.O.</button>
+                        </div>
+                    </div>
+
+                    <!-- Past Returns List -->
+                    <div class="past-returns-section">
+                        <h3>Your Past Returns</h3>
+                        <div id="past-returns-list"></div>
+                    </div>
+                </div>
+
+                <!-- Review Returns Page (G.O. / Main Leader) -->
+                <div class="page" id="review-returns">
+                    <div class="page-header">
+                        <h2>Review Returns</h2>
+                    </div>
+                    <div class="review-filters">
+                        <select id="review-status-filter">
+                            <option value="submitted">Pending Review</option>
+                            <option value="reviewed">Approved</option>
+                            <option value="rejected">Rejected</option>
+                            <option value="">All</option>
+                        </select>
+                    </div>
+                    <div id="review-returns-list"></div>
+                </div>
             </main>
+
+            <!-- Image Viewer Modal -->
+            <div class="modal" id="image-viewer-modal">
+                <div class="modal-content modal-large">
+                    <div class="modal-header">
+                        <h3>Original Returns Sheet</h3>
+                        <button class="close-btn" id="close-image-viewer">&times;</button>
+                    </div>
+                    <div class="image-viewer-body">
+                        <img id="viewer-image" alt="Original returns sheet">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Review Detail Modal -->
+            <div class="modal" id="review-detail-modal">
+                <div class="modal-content modal-large">
+                    <div class="modal-header">
+                        <h3 id="review-modal-title">Review Return</h3>
+                        <button class="close-btn" id="close-review-modal">&times;</button>
+                    </div>
+                    <div id="review-modal-body"></div>
+                    <div class="review-modal-actions" id="review-modal-actions">
+                        <div class="form-group">
+                            <label for="review-notes">Notes (optional)</label>
+                            <textarea id="review-notes" placeholder="Add feedback for the pastor..."></textarea>
+                        </div>
+                        <div class="review-buttons">
+                            <button class="btn-danger" id="reject-return-btn">✗ Reject</button>
+                            <button class="btn-success" id="approve-return-btn">✓ Approve</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Member Modal -->
             <div class="modal" id="member-modal">

@@ -638,3 +638,546 @@ form {
         padding: 1.5rem;
     }
 }
+
+
+/* ──────────────────────────────────────────
+   Monthly Returns Styles
+   ────────────────────────────────────────── */
+
+/* Upload Section */
+.returns-upload-section {
+    margin-bottom: 2rem;
+}
+
+.upload-area {
+    background: white;
+    border: 3px dashed #bdc3c7;
+    border-radius: 12px;
+    padding: 3rem 2rem;
+    text-align: center;
+    transition: border-color 0.3s ease, background 0.3s ease;
+}
+
+.upload-area:hover {
+    border-color: #3498db;
+    background: #f8f9ff;
+}
+
+.upload-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+}
+
+.upload-area h3 {
+    color: #2c3e50;
+    margin-bottom: 0.5rem;
+}
+
+.upload-area p {
+    color: #7f8c8d;
+    margin-bottom: 1.5rem;
+}
+
+.upload-buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.upload-btn {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Upload Preview */
+.upload-preview {
+    background: white;
+    border-radius: 12px;
+    padding: 1rem;
+    text-align: center;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1rem;
+}
+
+.upload-preview img {
+    max-width: 100%;
+    max-height: 200px;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    object-fit: contain;
+}
+
+/* Extraction Loading */
+.extraction-loading {
+    text-align: center;
+    padding: 3rem;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid #ecf0f1;
+    border-top-color: #3498db;
+    border-radius: 50%;
+    margin: 0 auto 1rem;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.extraction-loading p {
+    color: #2c3e50;
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}
+
+.loading-sub {
+    color: #95a5a6;
+    font-size: 0.9rem;
+}
+
+/* Returns Data Section */
+.returns-data-section {
+    background: white;
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    margin-bottom: 2rem;
+}
+
+.returns-header-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.returns-meta {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.returns-church {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #2c3e50;
+}
+
+.returns-month {
+    background: #3498db;
+    color: white;
+    padding: 0.3rem 0.8rem;
+    border-radius: 16px;
+    font-size: 0.9rem;
+}
+
+.returns-notice {
+    background: #fef9e7;
+    border-left: 4px solid #f1c40f;
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+}
+
+.returns-notice p {
+    color: #7d6608;
+}
+
+.highlight-example {
+    background: #fff3cd;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+}
+
+/* Returns Tables */
+.returns-table-section {
+    margin-bottom: 2rem;
+}
+
+.returns-table-section h3 {
+    color: #2c3e50;
+    margin-bottom: 0.75rem;
+    font-size: 1.1rem;
+}
+
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.returns-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    min-width: 500px;
+}
+
+.returns-table th {
+    background: #2c3e50;
+    color: white;
+    padding: 0.6rem 0.5rem;
+    text-align: center;
+    font-weight: 500;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.returns-table td {
+    padding: 0.3rem;
+    border-bottom: 1px solid #ecf0f1;
+}
+
+.returns-table tbody tr:hover {
+    background: #f8f9fa;
+}
+
+.table-input {
+    width: 100%;
+    padding: 0.4rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    text-align: center;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.table-input:focus {
+    outline: none;
+    border-color: #3498db;
+    background: #f0f8ff;
+}
+
+.table-input[type="number"] {
+    -moz-appearance: textfield;
+    width: 70px;
+}
+
+.table-input[type="number"]::-webkit-inner-spin-button,
+.table-input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+}
+
+.table-input.uncertain {
+    background: #fff3cd;
+    border-color: #ffc107;
+}
+
+.table-input.total-cell {
+    background: #f8f9fa;
+    font-weight: bold;
+    border-color: #dee2e6;
+}
+
+.totals-row td {
+    background: #f1f3f5;
+    padding: 0.6rem 0.5rem;
+    text-align: center;
+}
+
+.grand-total-row td {
+    background: #2c3e50;
+    color: white;
+    padding: 0.75rem;
+    text-align: center;
+    font-size: 1rem;
+}
+
+/* Review table (read-only) */
+.review-table td {
+    padding: 0.5rem;
+    text-align: center;
+}
+
+/* Returns Actions */
+.returns-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: flex-end;
+    padding-top: 1.5rem;
+    border-top: 2px solid #ecf0f1;
+    flex-wrap: wrap;
+}
+
+/* Past Returns */
+.past-returns-section {
+    margin-top: 2rem;
+}
+
+.past-returns-section h3 {
+    color: #2c3e50;
+    margin-bottom: 1rem;
+}
+
+.return-card {
+    background: white;
+    padding: 1rem 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    margin-bottom: 0.75rem;
+    border-left: 4px solid #95a5a6;
+}
+
+.return-card.draft { border-left-color: #f39c12; }
+.return-card.submitted { border-left-color: #3498db; }
+.return-card.reviewed { border-left-color: #27ae60; }
+.return-card.rejected { border-left-color: #e74c3c; }
+
+.return-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.return-month {
+    font-weight: bold;
+    color: #2c3e50;
+    font-size: 1.05rem;
+}
+
+.return-status {
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.status-draft { background: #fef3cd; color: #856404; }
+.status-submitted { background: #d1ecf1; color: #0c5460; }
+.status-reviewed { background: #d4edda; color: #155724; }
+.status-rejected { background: #f8d7da; color: #721c24; }
+
+.return-card-details {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.85rem;
+    color: #7f8c8d;
+}
+
+.return-notes {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: #555;
+    background: #f8f9fa;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+}
+
+.empty-state {
+    text-align: center;
+    color: #95a5a6;
+    padding: 2rem;
+    font-size: 1rem;
+}
+
+/* ──────────────────────────────────────────
+   G.O. Review Page Styles
+   ────────────────────────────────────────── */
+
+.review-filters {
+    margin-bottom: 1.5rem;
+}
+
+.review-filters select {
+    padding: 0.6rem 1rem;
+    border: 2px solid #ecf0f1;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    min-width: 200px;
+}
+
+.review-filters select:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+.review-card {
+    background: white;
+    padding: 1.25rem 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    margin-bottom: 0.75rem;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.review-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.review-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.review-branch-name {
+    font-weight: bold;
+    color: #2c3e50;
+    font-size: 1.05rem;
+    margin-right: 0.75rem;
+}
+
+.review-month {
+    color: #7f8c8d;
+    font-size: 0.9rem;
+}
+
+.review-card-meta {
+    font-size: 0.85rem;
+    color: #95a5a6;
+}
+
+/* Review Modal */
+.modal-large {
+    max-width: 800px;
+}
+
+.review-detail-content {
+    padding: 1.5rem;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+.review-detail-content h4 {
+    color: #2c3e50;
+    margin: 1.5rem 0 0.75rem;
+}
+
+.review-detail-content h4:first-child {
+    margin-top: 0;
+}
+
+.review-modal-actions {
+    padding: 1.5rem;
+    border-top: 1px solid #ecf0f1;
+}
+
+.review-modal-actions .form-group {
+    margin-bottom: 1rem;
+}
+
+.review-modal-actions textarea {
+    width: 100%;
+    padding: 0.75rem;
+    border: 2px solid #ecf0f1;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    min-height: 80px;
+    resize: vertical;
+}
+
+.review-modal-actions textarea:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+.review-buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: flex-end;
+}
+
+.btn-success {
+    background: #27ae60;
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.3s ease;
+}
+
+.btn-success:hover {
+    background: #219a52;
+}
+
+/* Image Viewer */
+.image-viewer-body {
+    padding: 1.5rem;
+    text-align: center;
+}
+
+.image-viewer-body img {
+    max-width: 100%;
+    max-height: 70vh;
+    border-radius: 8px;
+    object-fit: contain;
+}
+
+/* ──────────────────────────────────────────
+   Monthly Returns Responsive
+   ────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+    .upload-area {
+        padding: 2rem 1rem;
+    }
+
+    .upload-buttons {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .upload-btn {
+        justify-content: center;
+    }
+
+    .returns-header-info {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .returns-actions {
+        flex-direction: column;
+    }
+
+    .returns-actions button {
+        width: 100%;
+    }
+
+    .return-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .review-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .table-input[type="number"] {
+        width: 55px;
+        font-size: 0.8rem;
+    }
+
+    .modal-large {
+        max-width: 100%;
+    }
+
+    .review-buttons {
+        flex-direction: column;
+    }
+
+    .review-buttons button {
+        width: 100%;
+    }
+}
