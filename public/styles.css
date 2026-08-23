@@ -692,6 +692,48 @@ form {
     gap: 0.5rem;
 }
 
+/* Upload Tips */
+.upload-tips {
+    margin-top: 1.5rem;
+    text-align: left;
+    background: #f0f8ff;
+    border: 1px solid #d1ecf1;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    max-width: 400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.upload-tips .tips-title {
+    font-weight: 600;
+    color: #0c5460;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.upload-tips ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.upload-tips li {
+    font-size: 0.82rem;
+    color: #555;
+    padding: 0.25rem 0;
+    padding-left: 1.2rem;
+    position: relative;
+}
+
+.upload-tips li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: #27ae60;
+    font-weight: bold;
+}
+
 /* Upload Preview */
 .upload-preview {
     background: white;
