@@ -1,0 +1,30 @@
+# Render Blueprint - Infrastructure as Code for Render.com
+# Deploy: connect this repo on Render dashboard, it auto-detects this file
+
+services:
+  - type: web
+    name: church-management-app
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: DB_SSL
+        value: "true"
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard (Supabase connection string)
+      - key: JWT_SECRET
+        generateValue: true  # Render auto-generates a secure random value
+      - key: OPENAI_API_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: ADMIN_PASSWORD
+        sync: false  # Set manually in Render dashboard
+      - key: LOG_LEVEL
+        value: info
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: OTEL_ENABLED
+        value: "false"  # No OTel collector on free tier

@@ -53,6 +53,7 @@ COPY --from=deps /app/node_modules ./node_modules
 
 # Copy application code (explicit — no wildcards, no secrets)
 COPY server.js ./
+COPY start.sh ./
 COPY lib/ ./lib/
 COPY db/ ./db/
 COPY public/ ./public/
@@ -61,7 +62,8 @@ COPY package.json ./
 # Security: set ownership and restrict permissions
 RUN chown -R appuser:appgroup /app && \
     chmod -R 555 /app && \
-    chmod -R 755 /app/node_modules
+    chmod -R 755 /app/node_modules && \
+    chmod 555 /app/start.sh
 
 # Switch to non-root user
 USER 1001:1001
@@ -81,5 +83,5 @@ LABEL security.scan-on-push="true"
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || exit 1
 
-# Start application (exec form — no shell wrapper, signals pass through)
-CMD ["node", "server.js"]
+# Start application (runs migrations then starts server)
+CMD ["sh", "./start.sh"]
