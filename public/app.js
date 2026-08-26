@@ -1177,7 +1177,7 @@ class ChurchManagementApp {
         }
 
         container.innerHTML = returns.map(r => `
-            <div class="review-card" onclick="app.openReviewDetail(${r.id})">
+            <div class="review-card" data-return-id="${r.id}">
                 <div class="review-card-header">
                     <div>
                         <span class="review-branch-name">${this.escapeHtml(r.branch_name || 'Unknown Branch')}</span>
@@ -1190,6 +1190,14 @@ class ChurchManagementApp {
                 </div>
             </div>
         `).join('');
+
+        // Add click handlers via event delegation
+        container.querySelectorAll('.review-card[data-return-id]').forEach(card => {
+            card.addEventListener('click', () => {
+                const returnId = parseInt(card.dataset.returnId);
+                this.openReviewDetail(returnId);
+            });
+        });
     }
 
     async openReviewDetail(returnId) {
