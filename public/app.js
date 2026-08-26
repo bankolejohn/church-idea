@@ -1078,6 +1078,12 @@ class ChurchManagementApp {
                 await this.saveDraft();
             }
 
+            // Check saveDraft actually succeeded
+            if (!this.currentReturnId) {
+                alert('Could not save the draft. Please fix any errors and try again.');
+                return;
+            }
+
             await this.apiCall(`/api/returns/${this.currentReturnId}/submit`, 'POST');
             this.showSuccessMessage('Returns submitted to G.O. successfully!');
             this.resetUpload();
