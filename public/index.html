@@ -21,10 +21,121 @@
 </head>
 <body>
     <div class="app">
+        <!-- Landing Page -->
+        <div class="landing" id="landing-screen">
+            <nav class="landing-nav">
+                <div class="landing-nav-inner">
+                    <div class="brand">
+                        <span class="brand-icon">✝</span>
+                        <span class="brand-name">GraceFlow</span>
+                    </div>
+                    <button class="btn-signin" id="nav-signin-btn">Sign In</button>
+                </div>
+            </nav>
+
+            <section class="hero">
+                <div class="hero-content">
+                    <div class="hero-badge">Church Management, Simplified</div>
+                    <h1 class="hero-title">Shepherd your church with <span class="hero-accent">clarity and grace</span></h1>
+                    <p class="hero-subtitle">
+                        From member records to monthly returns, GraceFlow brings your branches,
+                        pastors, and leadership together in one place. Snap a photo of your handwritten
+                        returns and let AI do the rest.
+                    </p>
+                    <div class="hero-actions">
+                        <button class="btn-hero-primary" id="hero-signin-btn">Get Started</button>
+                        <a href="#features" class="btn-hero-secondary">Learn More</a>
+                    </div>
+                </div>
+                <div class="hero-visual">
+                    <div class="hero-card hero-card-1">
+                        <span class="hero-card-icon">📊</span>
+                        <div>
+                            <strong>480</strong>
+                            <small>Monthly Attendance</small>
+                        </div>
+                    </div>
+                    <div class="hero-card hero-card-2">
+                        <span class="hero-card-icon">💰</span>
+                        <div>
+                            <strong>₦313,900</strong>
+                            <small>Monthly Returns</small>
+                        </div>
+                    </div>
+                    <div class="hero-card hero-card-3">
+                        <span class="hero-card-icon">📸</span>
+                        <div>
+                            <strong>AI Extraction</strong>
+                            <small>Photo to data in seconds</small>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="features" id="features">
+                <div class="section-heading">
+                    <h2>Everything your ministry needs</h2>
+                    <p>Built for pastors, area pastors, and the General Overseer</p>
+                </div>
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon feature-icon-green">👥</div>
+                        <h3>Member Management</h3>
+                        <p>Keep track of every member across all branches with rich profiles and worker roles.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon feature-icon-gold">📸</div>
+                        <h3>AI Monthly Returns</h3>
+                        <p>Snap a photo of handwritten returns. AI reads the figures into an editable spreadsheet.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon feature-icon-teal">🏛️</div>
+                        <h3>Branch Oversight</h3>
+                        <p>Manage all your assemblies from one dashboard with clear, real-time insights.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon feature-icon-green">✅</div>
+                        <h3>Review & Approve</h3>
+                        <p>The G.O. reviews and approves submissions from pastors with a single click.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon feature-icon-gold">🔒</div>
+                        <h3>Role-Based Access</h3>
+                        <p>Pastors see their branch; leaders see everything. Everyone sees what matters to them.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon feature-icon-teal">📱</div>
+                        <h3>Works Anywhere</h3>
+                        <p>Install it on your phone. Manage your church from the pew, the office, or the road.</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="cta-band">
+                <h2>Ready to bring order to your ministry?</h2>
+                <p>Sign in and start managing your church today.</p>
+                <button class="btn-hero-primary" id="cta-signin-btn">Sign In Now</button>
+            </section>
+
+            <footer class="landing-footer">
+                <div class="brand">
+                    <span class="brand-icon">✝</span>
+                    <span class="brand-name">GraceFlow</span>
+                </div>
+                <p>Serving churches with clarity and grace.</p>
+            </footer>
+        </div>
+
         <!-- Login Screen -->
-        <div class="login-container" id="login-screen">
+        <div class="login-container" id="login-screen" style="display: none;">
             <div class="login-card">
-                <h1>Church Management System</h1>
+                <button class="login-back" id="login-back-btn">&larr; Back</button>
+                <div class="login-brand">
+                    <span class="brand-icon">✝</span>
+                    <span class="brand-name">GraceFlow</span>
+                </div>
+                <h1>Welcome back</h1>
+                <p class="login-sub">Sign in to manage your church</p>
                 <form id="login-form">
                     <div class="form-group">
                         <label for="username">Username</label>
@@ -34,12 +145,9 @@
                         <label for="password">Password</label>
                         <input type="password" id="password" required>
                     </div>
-                    <button type="submit" class="btn-primary">Login</button>
+                    <button type="submit" class="btn-primary">Sign In</button>
                 </form>
                 <div id="login-error" class="error-message"></div>
-                <div class="login-help">
-                    <p><strong>Default Admin:</strong> username: admin, password: admin123</p>
-                </div>
             </div>
         </div>
 
@@ -47,7 +155,7 @@
         <div class="main-app" id="main-app" style="display: none;">
             <header class="header">
                 <div class="header-content">
-                    <h1>Church Management</h1>
+                    <h1><span class="header-brand-icon">✝</span> GraceFlow</h1>
                     <div class="user-info">
                         <div class="user-details">
                             <span id="user-role"></span>

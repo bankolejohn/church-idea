@@ -32,13 +32,30 @@ class ChurchManagementApp {
                 this.showMainApp();
                 await this.loadData();
             } catch (error) {
-                this.showLogin();
+                this.showLanding();
             }
         } else {
-            this.showLogin();
+            this.showLanding();
         }
 
         this.setupEventListeners();
+        this.setupLandingListeners();
+    }
+
+    setupLandingListeners() {
+        ['nav-signin-btn', 'hero-signin-btn', 'cta-signin-btn'].forEach(id => {
+            const btn = document.getElementById(id);
+            if (btn) btn.addEventListener('click', () => this.showLogin());
+        });
+
+        const backBtn = document.getElementById('login-back-btn');
+        if (backBtn) backBtn.addEventListener('click', () => this.showLanding());
+    }
+
+    showLanding() {
+        document.getElementById('landing-screen').style.display = 'block';
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('main-app').style.display = 'none';
     }
 
     // ──────────────────────────────────────────
@@ -176,7 +193,7 @@ class ChurchManagementApp {
         this.token = null;
         this.user = null;
         localStorage.removeItem('token');
-        this.showLogin();
+        this.showLanding();
     }
 
     async getCurrentUser() {
@@ -190,12 +207,14 @@ class ChurchManagementApp {
     }
 
     showLogin() {
+        document.getElementById('landing-screen').style.display = 'none';
         document.getElementById('login-screen').style.display = 'flex';
         document.getElementById('main-app').style.display = 'none';
         document.getElementById('login-error').classList.remove('show');
     }
 
     showMainApp() {
+        document.getElementById('landing-screen').style.display = 'none';
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('main-app').style.display = 'block';
         this.updateUIForRole();
