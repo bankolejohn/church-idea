@@ -803,6 +803,15 @@ class ChurchManagementApp {
         document.getElementById('review-detail-modal').addEventListener('click', (e) => {
             if (e.target.id === 'review-detail-modal') this.closeModal('review-detail-modal');
         });
+
+        // Review list: single delegated click handler (works for dynamically rendered cards)
+        document.getElementById('review-returns-list').addEventListener('click', (e) => {
+            const card = e.target.closest('.review-card[data-return-id]');
+            if (card) {
+                const returnId = parseInt(card.dataset.returnId);
+                if (returnId) this.openReviewDetail(returnId);
+            }
+        });
     }
 
     async handleImageUpload(event) {
@@ -1190,14 +1199,6 @@ class ChurchManagementApp {
                 </div>
             </div>
         `).join('');
-
-        // Add click handlers via event delegation
-        container.querySelectorAll('.review-card[data-return-id]').forEach(card => {
-            card.addEventListener('click', () => {
-                const returnId = parseInt(card.dataset.returnId);
-                this.openReviewDetail(returnId);
-            });
-        });
     }
 
     async openReviewDetail(returnId) {
@@ -1226,7 +1227,8 @@ class ChurchManagementApp {
         if (data.attendance && data.attendance.length > 0) {
             html += '<h4>📊 Attendance</h4><div class="table-responsive"><table class="returns-table review-table"><thead><tr><th>Date</th><th>Men</th><th>Women</th><th>Youth</th><th>Children</th><th>Total</th></tr></thead><tbody>';
             data.attendance.forEach(row => {
-                html += `<tr><td>${this.escapeHtml(row.date)}</td><td>${row.men}</td><td>${row.women}</td><td>${row.youth}</td><td>${row.children}</td><td><strong>${row.total}</strong></td></tr>`;
+                const dateStr = row.service_date || row.date || '';
+                html += `<tr><td>${this.escapeHtml(dateStr)}</td><td>${row.men}</td><td>${row.women}</td><td>${row.youth}</td><td>${row.children}</td><td><strong>${row.total}</strong></td></tr>`;
             });
             const attTotal = data.attendance.reduce((s, r) => s + (r.total || 0), 0);
             html += `</tbody><tfoot><tr class="totals-row"><td colspan="5"><strong>Grand Total</strong></td><td><strong>${attTotal}</strong></td></tr></tfoot></table></div>`;
@@ -1237,11 +1239,17 @@ class ChurchManagementApp {
             html += '<h4>💰 Income</h4><div class="table-responsive"><table class="returns-table review-table"><thead><tr><th>Date</th><th>Tithe A/C</th><th>Tithe Off.</th><th>Main A/C</th><th>S. School</th><th>Evangelism</th><th>P. Water</th><th>Other</th></tr></thead><tbody>';
             let grandTotal = 0;
             data.income.forEach(row => {
+                const dateStr = row.service_date || row.date || '';
                 const rowTotal = (row.tithe_account || 0) + (row.tithe_offering || 0) + (row.main_account || 0) + (row.sunday_school || 0) + (row.evangelism || 0) + (row.pure_water || 0) + (row.other || 0);
                 grandTotal += rowTotal;
-                html += `<tr><td>${this.escapeHtml(row.date)}</td><td>₦${(row.tithe_account || 0).toLocaleString()}</td><td>₦${(row.tithe_offering || 0).toLocaleString()}</td><td>₦${(row.main_account || 0).toLocaleString()}</td><td>₦${(row.sunday_school || 0).toLocaleString()}</td><td>₦${(row.evangelism || 0).toLocaleString()}</td><td>₦${(row.pure_water || 0).toLocaleString()}</td><td>₦${(row.other || 0).toLocaleString()}</td></tr>`;
+                html += `<tr><td>${this.escapeHtml(dateStr)}</td><td>₦${(row.tithe_account || 0).toLocaleString()}</td><td>₦${(row.tithe_offering || 0).toLocaleString()}</td><td>₦${(row.main_account || 0).toLocaleString()}</td><td>₦${(row.sunday_school || 0).toLocaleString()}</td><td>₦${(row.evangelism || 0).toLocaleString()}</td><td>₦${(row.pure_water || 0).toLocaleString()}</td><td>₦${(row.other || 0).toLocaleString()}</td></tr>`;
             });
             html += `</tbody><tfoot><tr class="grand-total-row"><td colspan="8"><strong>Grand Total: ₦${grandTotal.toLocaleString()}</strong></td></tr></tfoot></table></div>`;
+        }
+
+        // Show review notes if present
+        if (data.review_notes) {
+            html += `<div class="return-notes" style="margin-top:1rem;"><strong>Review Notes:</strong> ${this.escapeHtml(data.review_notes)}</div>`;
         }
 
         html += '</div>';
