@@ -97,6 +97,40 @@ const migrations = [
             CREATE INDEX IF NOT EXISTS idx_attendance_return ON attendance_entries(return_id);
             CREATE INDEX IF NOT EXISTS idx_income_return ON income_entries(return_id);
         `
+    },
+    {
+        name: '003_income_restructure',
+        up: `
+            -- Restructure income to match the paper form:
+            --   Tithe Account: tithe_account, tithe_offering
+            --   Main Account:  main_account, sunday_school, evangelism, assessment
+            -- Removes pure_water and consolidates legacy 'other' into 'assessment'.
+
+            -- 1. Add the assessment column (idempotent)
+            ALTER TABLE income_entries ADD COLUMN IF NOT EXISTS assessment DECIMAL(12,2) DEFAULT 0;
+
+            -- 2. Backfill assessment from legacy 'other' where assessment is still default
+            --    (guarded so re-runs do not double-apply). Only runs while 'other' exists.
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'income_entries' AND column_name = 'other'
+                ) THEN
+                    UPDATE income_entries
+                    SET assessment = other
+                    WHERE (assessment IS NULL OR assessment = 0)
+                      AND other IS NOT NULL AND other <> 0;
+                END IF;
+            END $$;
+
+            -- 3. Drop retired columns (idempotent)
+            ALTER TABLE income_entries DROP COLUMN IF EXISTS pure_water;
+            ALTER TABLE income_entries DROP COLUMN IF EXISTS other;
+
+            -- 4. Record how a return was entered (photo vs manual)
+            ALTER TABLE monthly_returns ADD COLUMN IF NOT EXISTS entry_mode VARCHAR(10) DEFAULT 'photo';
+        `
     }
 ];
 

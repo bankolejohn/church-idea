@@ -8,6 +8,11 @@
  */
 
 class ChurchManagementApp {
+    // Income field definitions (mirror the paper form + backend)
+    static TITHE_FIELDS = ['tithe_account', 'tithe_offering'];
+    static MAIN_FIELDS = ['main_account', 'sunday_school', 'evangelism', 'assessment'];
+    static INCOME_FIELDS = ['tithe_account', 'tithe_offering', 'main_account', 'sunday_school', 'evangelism', 'assessment'];
+
     constructor() {
         this.token = localStorage.getItem('token');
         this.user = null;
@@ -326,7 +331,10 @@ class ChurchManagementApp {
         document.getElementById(page).classList.add('active');
 
         // Load data for returns pages
-        if (page === 'monthly-returns') this.loadPastReturns();
+        if (page === 'monthly-returns') {
+            this.showReturnsView('choice');
+            this.loadPastReturns();
+        }
         if (page === 'review-returns') this.loadReviewReturns();
     }
 
@@ -803,6 +811,19 @@ class ChurchManagementApp {
         const rejectBtn = document.getElementById('reject-return-btn');
         const reviewStatusFilter = document.getElementById('review-status-filter');
 
+        // Entry chooser + navigation
+        const choosePhotoBtn = document.getElementById('choose-photo-btn');
+        const chooseManualBtn = document.getElementById('choose-manual-btn');
+        const uploadBackBtn = document.getElementById('upload-back-btn');
+        const dataBackBtn = document.getElementById('data-back-btn');
+        const addWeekBtn = document.getElementById('add-week-btn');
+
+        if (choosePhotoBtn) choosePhotoBtn.addEventListener('click', () => this.showReturnsView('photo'));
+        if (chooseManualBtn) chooseManualBtn.addEventListener('click', () => this.startManualEntry());
+        if (uploadBackBtn) uploadBackBtn.addEventListener('click', () => this.showReturnsView('choice'));
+        if (dataBackBtn) dataBackBtn.addEventListener('click', () => this.showReturnsView('choice'));
+        if (addWeekBtn) addWeekBtn.addEventListener('click', () => this.addWeekRow());
+
         if (imageInput) imageInput.addEventListener('change', (e) => this.handleImageUpload(e));
         if (fileInput) fileInput.addEventListener('change', (e) => this.handleImageUpload(e));
         if (changeImageBtn) changeImageBtn.addEventListener('click', () => this.resetUpload());
@@ -876,27 +897,103 @@ class ChurchManagementApp {
             }
 
             this.extractedData = result.extracted;
-            this.renderExtractedData(result.extracted);
             loading.style.display = 'none';
-            dataSection.style.display = 'block';
+            this.showReturnsView('data');
+            this.renderExtractedData(result.extracted);
 
         } catch (error) {
             loading.style.display = 'none';
             alert('Error extracting data: ' + error.message);
-            this.resetUpload();
+            this.showReturnsView('photo');
         }
     }
 
     renderExtractedData(data) {
+        this.entryMode = 'photo';
+
         // Header info
         document.getElementById('returns-church-name').textContent = data.church_name || '';
         document.getElementById('returns-month').textContent = data.month || '';
+        document.getElementById('returns-month').style.display = '';
+        document.getElementById('returns-month-picker').style.display = 'none';
+        document.getElementById('view-original-btn').style.display = '';
+        document.getElementById('add-row-control').style.display = 'block';
+        document.getElementById('returns-notice').style.display = '';
 
         // Attendance table
         this.renderAttendanceTable(data.attendance || []);
 
         // Income table
         this.renderIncomeTable(data.income || []);
+    }
+
+    // ──────────────────────────────────────────
+    // Manual entry mode
+    // ──────────────────────────────────────────
+
+    buildEmptyAttendanceRows(n) {
+        return Array.from({ length: n }, () => ({
+            date: '', men: 0, women: 0, youth: 0, children: 0, total: 0
+        }));
+    }
+
+    buildEmptyIncomeRows(n) {
+        return Array.from({ length: n }, () => {
+            const row = { date: '' };
+            ChurchManagementApp.INCOME_FIELDS.forEach(f => { row[f] = 0; });
+            return row;
+        });
+    }
+
+    startManualEntry() {
+        this.entryMode = 'manual';
+        this.extractedData = null;
+        this.uploadedImageData = null;
+        this.currentReturnId = null;
+
+        // Header: hide church/original-image, show month picker
+        document.getElementById('returns-church-name').textContent = '';
+        document.getElementById('returns-month').style.display = 'none';
+        document.getElementById('view-original-btn').style.display = 'none';
+        document.getElementById('returns-month-picker').style.display = 'flex';
+        document.getElementById('manual-month').value = '';
+        document.getElementById('add-row-control').style.display = 'block';
+
+        // Manual entry has no AI to review; soften the notice
+        const notice = document.getElementById('returns-notice');
+        notice.style.display = 'none';
+
+        // Seed 5 empty weekly rows
+        this.renderAttendanceTable(this.buildEmptyAttendanceRows(5));
+        this.renderIncomeTable(this.buildEmptyIncomeRows(5));
+
+        this.showReturnsView('data');
+    }
+
+    addWeekRow() {
+        // Read current rows, append one empty, re-render (keeps indices consistent)
+        const { attendance, income } = this.getTableData();
+        attendance.push({ date: '', men: 0, women: 0, youth: 0, children: 0, total: 0 });
+        const emptyIncome = { date: '' };
+        ChurchManagementApp.INCOME_FIELDS.forEach(f => { emptyIncome[f] = 0; });
+        income.push(emptyIncome);
+
+        this.renderAttendanceTable(attendance);
+        this.renderIncomeTable(income);
+    }
+
+    removeWeekRow(index) {
+        const { attendance, income } = this.getTableData();
+        if (attendance.length <= 1) {
+            alert('At least one week is required.');
+            return;
+        }
+        // Remove the same row index from both tables to keep them aligned
+        if (index >= 0 && index < attendance.length) attendance.splice(index, 1);
+        if (index >= 0 && index < income.length) income.splice(index, 1);
+
+        this.renderAttendanceTable(attendance);
+        this.renderIncomeTable(income);
     }
 
     renderAttendanceTable(attendance) {
@@ -914,6 +1011,7 @@ class ChurchManagementApp {
                 <td><input type="number" class="table-input" data-type="attendance" data-index="${index}" data-field="youth" value="${row.youth || 0}"></td>
                 <td><input type="number" class="table-input" data-type="attendance" data-index="${index}" data-field="children" value="${row.children || 0}"></td>
                 <td><input type="number" class="table-input total-cell" data-type="attendance" data-index="${index}" data-field="total" value="${row.total || 0}" readonly></td>
+                <td class="row-action-col"><button type="button" class="btn-remove-row" data-type="attendance" data-index="${index}" title="Remove week">✕</button></td>
             `;
             tbody.appendChild(tr);
         });
@@ -921,6 +1019,11 @@ class ChurchManagementApp {
         // Add row totals listener
         tbody.querySelectorAll('input[type="number"]:not([readonly])').forEach(input => {
             input.addEventListener('input', () => this.recalculateAttendanceRow(input.dataset.index));
+        });
+
+        // Remove-row buttons
+        tbody.querySelectorAll('.btn-remove-row').forEach(btn => {
+            btn.addEventListener('click', () => this.removeWeekRow(parseInt(btn.dataset.index)));
         });
 
         // Grand total
@@ -944,13 +1047,13 @@ class ChurchManagementApp {
         totals.forEach(input => { grandTotal += parseInt(input.value) || 0; });
 
         const tfoot = document.getElementById('attendance-tfoot');
-        tfoot.innerHTML = `<tr class="totals-row"><td colspan="5"><strong>Grand Total</strong></td><td><strong>${grandTotal}</strong></td></tr>`;
+        tfoot.innerHTML = `<tr class="totals-row"><td colspan="5"><strong>Grand Total</strong></td><td><strong>${grandTotal}</strong></td><td class="row-action-col"></td></tr>`;
     }
 
     renderAttendanceFooter(attendance) {
         const grandTotal = attendance.reduce((sum, row) => sum + (row.total || 0), 0);
         const tfoot = document.getElementById('attendance-tfoot');
-        tfoot.innerHTML = `<tr class="totals-row"><td colspan="5"><strong>Grand Total</strong></td><td><strong>${grandTotal}</strong></td></tr>`;
+        tfoot.innerHTML = `<tr class="totals-row"><td colspan="5"><strong>Grand Total</strong></td><td><strong>${grandTotal}</strong></td><td class="row-action-col"></td></tr>`;
     }
 
     renderIncomeTable(income) {
@@ -959,7 +1062,7 @@ class ChurchManagementApp {
         tbody.innerHTML = '';
         tfoot.innerHTML = '';
 
-        const fields = ['tithe_account', 'tithe_offering', 'main_account', 'sunday_school', 'evangelism', 'pure_water', 'other'];
+        const fields = ChurchManagementApp.INCOME_FIELDS;
 
         income.forEach((row, index) => {
             const tr = document.createElement('tr');
@@ -971,6 +1074,8 @@ class ChurchManagementApp {
                 cellsHtml += `<td><input type="number" class="table-input${isUncertain ? ' uncertain' : ''}" data-type="income" data-index="${index}" data-field="${field}" value="${value}"></td>`;
             });
 
+            cellsHtml += `<td class="row-action-col"><button type="button" class="btn-remove-row" data-type="income" data-index="${index}" title="Remove week">✕</button></td>`;
+
             tr.innerHTML = cellsHtml;
             tbody.appendChild(tr);
         });
@@ -981,36 +1086,39 @@ class ChurchManagementApp {
             input.addEventListener('focus', (e) => e.target.classList.remove('uncertain'));
         });
 
+        // Remove-row buttons
+        tbody.querySelectorAll('.btn-remove-row').forEach(btn => {
+            btn.addEventListener('click', () => this.removeWeekRow(parseInt(btn.dataset.index)));
+        });
+
         this.updateIncomeTotals();
     }
 
     updateIncomeTotals() {
-        const fields = ['tithe_account', 'tithe_offering', 'main_account', 'sunday_school', 'evangelism', 'pure_water', 'other'];
-        const totals = {};
-        let grandTotal = 0;
+        const titheFields = ChurchManagementApp.TITHE_FIELDS;
+        const mainFields = ChurchManagementApp.MAIN_FIELDS;
 
-        fields.forEach(field => {
-            const inputs = document.querySelectorAll(`input[data-type="income"][data-field="${field}"]`);
+        const sumField = (field) => {
             let sum = 0;
-            inputs.forEach(input => { sum += parseInt(input.value) || 0; });
-            totals[field] = sum;
-            grandTotal += sum;
-        });
+            document.querySelectorAll(`input[data-type="income"][data-field="${field}"]`)
+                .forEach(input => { sum += parseInt(input.value) || 0; });
+            return sum;
+        };
+
+        const titheSubtotal = titheFields.reduce((s, f) => s + sumField(f), 0);
+        const mainSubtotal = mainFields.reduce((s, f) => s + sumField(f), 0);
+        const grandTotal = titheSubtotal + mainSubtotal;
 
         const tfoot = document.getElementById('income-tfoot');
         tfoot.innerHTML = `
-            <tr class="totals-row">
-                <td><strong>Totals</strong></td>
-                <td><strong>₦${totals.tithe_account.toLocaleString()}</strong></td>
-                <td><strong>₦${totals.tithe_offering.toLocaleString()}</strong></td>
-                <td><strong>₦${totals.main_account.toLocaleString()}</strong></td>
-                <td><strong>₦${totals.sunday_school.toLocaleString()}</strong></td>
-                <td><strong>₦${totals.evangelism.toLocaleString()}</strong></td>
-                <td><strong>₦${totals.pure_water.toLocaleString()}</strong></td>
-                <td><strong>₦${totals.other.toLocaleString()}</strong></td>
+            <tr class="subtotals-row">
+                <td class="subtotal-label">Sub Total</td>
+                <td colspan="2" class="group-tithe"><strong>Tithe A/C: ₦${titheSubtotal.toLocaleString()}</strong></td>
+                <td colspan="4" class="group-main"><strong>Main A/C: ₦${mainSubtotal.toLocaleString()}</strong></td>
+                <td class="row-action-col"></td>
             </tr>
             <tr class="grand-total-row">
-                <td colspan="8"><strong>Grand Total: ₦${grandTotal.toLocaleString()}</strong></td>
+                <td colspan="8"><strong>Overall Grand Total: ₦${grandTotal.toLocaleString()}</strong></td>
             </tr>
         `;
     }
@@ -1025,6 +1133,30 @@ class ChurchManagementApp {
         this.uploadedImage = null;
         this.uploadedImageData = null;
         this.extractedData = null;
+    }
+
+    // Returns view state machine: 'choice' | 'photo' | 'manual' | 'data'
+    showReturnsView(view) {
+        this.returnsView = view;
+        const chooser = document.getElementById('entry-chooser');
+        const uploadSection = document.getElementById('returns-upload-section');
+        const dataSection = document.getElementById('returns-data-section');
+
+        // Default: hide all, then show what's needed
+        chooser.style.display = 'none';
+        uploadSection.style.display = 'none';
+        dataSection.style.display = 'none';
+
+        if (view === 'choice') {
+            chooser.style.display = 'block';
+            this.resetUpload();
+            this.currentReturnId = null;
+        } else if (view === 'photo') {
+            uploadSection.style.display = 'block';
+            this.resetUpload();
+        } else if (view === 'data') {
+            dataSection.style.display = 'block';
+        }
     }
 
     showOriginalImage() {
@@ -1045,7 +1177,7 @@ class ChurchManagementApp {
     getTableData() {
         const attendance = [];
         const incomeData = [];
-        const fields = ['tithe_account', 'tithe_offering', 'main_account', 'sunday_school', 'evangelism', 'pure_water', 'other'];
+        const fields = ChurchManagementApp.INCOME_FIELDS;
 
         // Get attendance rows
         const attRows = document.querySelectorAll('#attendance-tbody tr');
@@ -1076,22 +1208,36 @@ class ChurchManagementApp {
     async saveDraft() {
         try {
             const { attendance, income } = this.getTableData();
-            const month = this.extractedData ? this.extractedData.month : '';
+            const entryMode = this.entryMode || 'photo';
 
-            // Parse month to a date format the API expects
-            const monthDate = this.parseMonthToDate(month);
+            // Determine the month depending on entry mode
+            let monthDate;
+            if (entryMode === 'manual') {
+                const picked = document.getElementById('manual-month').value; // "2026-05"
+                if (!picked) {
+                    alert('Please select the return month before saving.');
+                    return null;
+                }
+                monthDate = `${picked}-01`; // first of the month
+            } else {
+                const month = this.extractedData ? this.extractedData.month : '';
+                monthDate = this.parseMonthToDate(month);
+            }
 
             const result = await this.apiCall('/api/returns', 'POST', {
                 month: monthDate,
                 attendance,
-                income
+                income,
+                entry_mode: entryMode
             });
 
             this.currentReturnId = result.id;
             this.showSuccessMessage('Draft saved successfully!');
             this.loadPastReturns();
+            return result.id;
         } catch (error) {
             alert('Error saving draft: ' + error.message);
+            return null;
         }
     }
 
@@ -1235,6 +1381,21 @@ class ChurchManagementApp {
         }
     }
 
+    computeTotalsFromRows(attendanceRows, incomeRows) {
+        const attendance_grand_total = attendanceRows.reduce((s, r) => s + (Number(r.total) || 0), 0);
+        const sumFields = (rows, fields) => rows.reduce(
+            (s, r) => s + fields.reduce((a, f) => a + (Number(r[f]) || 0), 0), 0
+        );
+        const tithe_subtotal = sumFields(incomeRows, ChurchManagementApp.TITHE_FIELDS);
+        const main_subtotal = sumFields(incomeRows, ChurchManagementApp.MAIN_FIELDS);
+        return {
+            attendance_grand_total,
+            tithe_subtotal,
+            main_subtotal,
+            overall_grand_total: tithe_subtotal + main_subtotal,
+        };
+    }
+
     renderReviewDetail(data) {
         const body = document.getElementById('review-modal-body');
         const title = document.getElementById('review-modal-title');
@@ -1249,21 +1410,52 @@ class ChurchManagementApp {
                 const dateStr = row.service_date || row.date || '';
                 html += `<tr><td>${this.escapeHtml(dateStr)}</td><td>${row.men}</td><td>${row.women}</td><td>${row.youth}</td><td>${row.children}</td><td><strong>${row.total}</strong></td></tr>`;
             });
-            const attTotal = data.attendance.reduce((s, r) => s + (r.total || 0), 0);
+            const attTotal = (data.totals && data.totals.attendance_grand_total != null)
+                ? data.totals.attendance_grand_total
+                : data.attendance.reduce((s, r) => s + (r.total || 0), 0);
             html += `</tbody><tfoot><tr class="totals-row"><td colspan="5"><strong>Grand Total</strong></td><td><strong>${attTotal}</strong></td></tr></tfoot></table></div>`;
         }
 
-        // Income table (read-only)
+        // Income table (read-only, grouped: Tithe Account | Main Account)
         if (data.income && data.income.length > 0) {
-            html += '<h4>💰 Income</h4><div class="table-responsive"><table class="returns-table review-table"><thead><tr><th>Date</th><th>Tithe A/C</th><th>Tithe Off.</th><th>Main A/C</th><th>S. School</th><th>Evangelism</th><th>P. Water</th><th>Other</th></tr></thead><tbody>';
-            let grandTotal = 0;
+            html += '<h4>💰 Income</h4><div class="table-responsive"><table class="returns-table review-table">';
+            html += `<thead>
+                <tr class="group-header-row">
+                    <th rowspan="2">Date</th>
+                    <th colspan="2" class="group-tithe">Tithe Account</th>
+                    <th colspan="4" class="group-main">Main Account</th>
+                </tr>
+                <tr>
+                    <th class="group-tithe">Tithe</th>
+                    <th class="group-tithe">10% Tithe of Off.</th>
+                    <th class="group-main">Main A/C</th>
+                    <th class="group-main">S. School</th>
+                    <th class="group-main">Evangelism</th>
+                    <th class="group-main">Assessment</th>
+                </tr>
+            </thead><tbody>`;
+
             data.income.forEach(row => {
                 const dateStr = row.service_date || row.date || '';
-                const rowTotal = (row.tithe_account || 0) + (row.tithe_offering || 0) + (row.main_account || 0) + (row.sunday_school || 0) + (row.evangelism || 0) + (row.pure_water || 0) + (row.other || 0);
-                grandTotal += rowTotal;
-                html += `<tr><td>${this.escapeHtml(dateStr)}</td><td>₦${(row.tithe_account || 0).toLocaleString()}</td><td>₦${(row.tithe_offering || 0).toLocaleString()}</td><td>₦${(row.main_account || 0).toLocaleString()}</td><td>₦${(row.sunday_school || 0).toLocaleString()}</td><td>₦${(row.evangelism || 0).toLocaleString()}</td><td>₦${(row.pure_water || 0).toLocaleString()}</td><td>₦${(row.other || 0).toLocaleString()}</td></tr>`;
+                const cell = (v) => `<td>₦${(Number(v) || 0).toLocaleString()}</td>`;
+                html += `<tr><td>${this.escapeHtml(dateStr)}</td>` +
+                    cell(row.tithe_account) + cell(row.tithe_offering) +
+                    cell(row.main_account) + cell(row.sunday_school) +
+                    cell(row.evangelism) + cell(row.assessment) + `</tr>`;
             });
-            html += `</tbody><tfoot><tr class="grand-total-row"><td colspan="8"><strong>Grand Total: ₦${grandTotal.toLocaleString()}</strong></td></tr></tfoot></table></div>`;
+
+            // Prefer server-computed totals; fall back to client computation
+            const t = data.totals || this.computeTotalsFromRows(data.attendance || [], data.income);
+            html += `</tbody><tfoot>
+                <tr class="subtotals-row">
+                    <td class="subtotal-label">Sub Total</td>
+                    <td colspan="2" class="group-tithe"><strong>Tithe A/C: ₦${(t.tithe_subtotal || 0).toLocaleString()}</strong></td>
+                    <td colspan="4" class="group-main"><strong>Main A/C: ₦${(t.main_subtotal || 0).toLocaleString()}</strong></td>
+                </tr>
+                <tr class="grand-total-row">
+                    <td colspan="7"><strong>Overall Grand Total: ₦${(t.overall_grand_total || 0).toLocaleString()}</strong></td>
+                </tr>
+            </tfoot></table></div>`;
         }
 
         // Show review notes if present

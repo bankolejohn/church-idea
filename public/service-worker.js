@@ -1,4 +1,4 @@
-const CACHE_NAME = 'church-cms-v2';
+const CACHE_NAME = 'church-cms-v3';
 const urlsToCache = [
   '/',
   '/index.html',

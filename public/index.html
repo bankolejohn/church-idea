@@ -277,8 +277,26 @@
                         <h2>Monthly Returns</h2>
                     </div>
 
+                    <!-- Entry Method Chooser -->
+                    <div class="entry-chooser" id="entry-chooser">
+                        <h3 class="chooser-title">How would you like to enter this month's returns?</h3>
+                        <div class="chooser-options">
+                            <button class="chooser-card" id="choose-photo-btn">
+                                <span class="chooser-icon">📸</span>
+                                <span class="chooser-label">Upload Photo</span>
+                                <span class="chooser-desc">Snap the handwritten sheet and let AI read the figures</span>
+                            </button>
+                            <button class="chooser-card" id="choose-manual-btn">
+                                <span class="chooser-icon">✍️</span>
+                                <span class="chooser-label">Enter Manually</span>
+                                <span class="chooser-desc">Type the figures into a blank table that calculates for you</span>
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- Upload Section -->
-                    <div class="returns-upload-section" id="returns-upload-section">
+                    <div class="returns-upload-section" id="returns-upload-section" style="display:none;">
+                        <button class="returns-back-btn" id="upload-back-btn">&larr; Back to options</button>
                         <div class="upload-area" id="upload-area">
                             <div class="upload-icon">📷</div>
                             <h3>Upload Monthly Returns Sheet</h3>
@@ -314,18 +332,26 @@
                         </div>
                     </div>
 
-                    <!-- Extracted Data Section (hidden until extraction complete) -->
+                    <!-- Data Section (photo-extracted OR manual entry) -->
                     <div class="returns-data-section" id="returns-data-section" style="display:none;">
+                        <button class="returns-back-btn" id="data-back-btn">&larr; Back to options</button>
+
                         <div class="returns-header-info">
                             <div class="returns-meta">
                                 <span class="returns-church" id="returns-church-name"></span>
                                 <span class="returns-month" id="returns-month"></span>
                             </div>
-                            <button class="btn-secondary" id="view-original-btn">🖼️ View Original Image</button>
+                            <button class="btn-secondary" id="view-original-btn" style="display:none;">🖼️ View Original Image</button>
                         </div>
 
-                        <div class="returns-notice">
-                            <p>⚠️ Please review the extracted data below. Values highlighted in <span class="highlight-example">yellow</span> may need correction.</p>
+                        <!-- Month picker (used mainly for manual entry) -->
+                        <div class="returns-month-picker" id="returns-month-picker" style="display:none;">
+                            <label for="manual-month">Return Month</label>
+                            <input type="month" id="manual-month">
+                        </div>
+
+                        <div class="returns-notice" id="returns-notice">
+                            <p>⚠️ Please review the figures below. Values highlighted in <span class="highlight-example">yellow</span> may need correction.</p>
                         </div>
 
                         <!-- Attendance Table -->
@@ -341,6 +367,7 @@
                                             <th>Youth</th>
                                             <th>Children</th>
                                             <th>Total</th>
+                                            <th class="row-action-col"></th>
                                         </tr>
                                     </thead>
                                     <tbody id="attendance-tbody"></tbody>
@@ -349,27 +376,36 @@
                             </div>
                         </div>
 
-                        <!-- Income Table -->
+                        <!-- Income Table (grouped: Tithe Account | Main Account) -->
                         <div class="returns-table-section">
                             <h3>💰 Income</h3>
                             <div class="table-responsive">
                                 <table class="returns-table" id="income-table">
                                     <thead>
+                                        <tr class="group-header-row">
+                                            <th rowspan="2">Date</th>
+                                            <th colspan="2" class="group-tithe">Tithe Account</th>
+                                            <th colspan="4" class="group-main">Main Account</th>
+                                            <th rowspan="2" class="row-action-col"></th>
+                                        </tr>
                                         <tr>
-                                            <th>Date</th>
-                                            <th>Tithe A/C</th>
-                                            <th>Tithe Off.</th>
-                                            <th>Main A/C</th>
-                                            <th>S. School</th>
-                                            <th>Evangelism</th>
-                                            <th>P. Water</th>
-                                            <th>Other</th>
+                                            <th class="group-tithe">Tithe</th>
+                                            <th class="group-tithe">10% Tithe of Off.</th>
+                                            <th class="group-main">Main A/C</th>
+                                            <th class="group-main">S. School</th>
+                                            <th class="group-main">Evangelism</th>
+                                            <th class="group-main">Assessment</th>
                                         </tr>
                                     </thead>
                                     <tbody id="income-tbody"></tbody>
                                     <tfoot id="income-tfoot"></tfoot>
                                 </table>
                             </div>
+                        </div>
+
+                        <!-- Add row control (manual + editable) -->
+                        <div class="add-row-control" id="add-row-control" style="display:none;">
+                            <button class="btn-add-row" id="add-week-btn">+ Add Week</button>
                         </div>
 
                         <!-- Actions -->
