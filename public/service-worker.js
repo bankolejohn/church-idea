@@ -1,39 +1,47 @@
-const CACHE_NAME = 'church-cms-v3';
+const CACHE_NAME = 'church-cms-v4';
 const urlsToCache = [
-  '/',
-  '/index.html',
-  '/styles.css',
-  '/app.js',
   '/manifest.json'
 ];
 
-// Install service worker and cache resources
+// Install service worker and cache resources, then activate immediately
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Opened cache');
-        return cache.addAll(urlsToCache);
-      })
+      .then((cache) => cache.addAll(urlsToCache))
+      .then(() => self.skipWaiting())
   );
 });
 
-// Fetch from cache first, then network
+// Network-first for app shell files (HTML/CSS/JS) so deploys are picked up
+// immediately. Cache-first only for static assets that rarely change.
+const APP_SHELL = ['/', '/index.html', '/styles.css', '/app.js'];
+
 self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        // Cache hit - return response
-        if (response) {
+  const url = new URL(event.request.url);
+  const isAppShell = APP_SHELL.includes(url.pathname);
+
+  if (isAppShell) {
+    // Network-first: always try to get the latest version.
+    // Fall back to cache only if the network is unavailable (offline).
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           return response;
-        }
-        return fetch(event.request);
-      }
-    )
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Cache-first for everything else (icons, manifest, etc.)
+  event.respondWith(
+    caches.match(event.request).then((response) => response || fetch(event.request))
   );
 });
 
-// Update service worker
+// Activate: clean up old caches and take control immediately
 self.addEventListener('activate', (event) => {
   const cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
@@ -45,6 +53,6 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
 });
